@@ -81,6 +81,7 @@ func main() {
 	r.Post("/api/connections", s.CreateConnection)
 	r.Patch("/api/connections/{id}", s.UpdateConnection)
 	r.Delete("/api/connections/{id}", s.DeleteConnection)
+	r.Post("/api/connections/{id}/ping", s.PingConnection)
 
 	log.Printf("dbeans backend listening on :%s", port)
 	if err := http.ListenAndServe(":"+port, r); err != nil {

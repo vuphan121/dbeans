@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -10,13 +11,15 @@ import (
 )
 
 type Connection struct {
-	ID       string          `json:"id"`
-	Name     string          `json:"name"`
-	Engine   string          `json:"engine"`
-	DSN      string          `json:"dsn"`
-	Fields   json.RawMessage `json:"fields"`
-	Layout   json.RawMessage `json:"layout"`
-	LastUsed string          `json:"lastUsed"`
+	ID            string          `json:"id"`
+	Name          string          `json:"name"`
+	Engine        string          `json:"engine"`
+	DSN           string          `json:"dsn"`
+	Fields        json.RawMessage `json:"fields"`
+	Layout        json.RawMessage `json:"layout"`
+	LastUsed      string          `json:"lastUsed"`
+	Status        string          `json:"status"`
+	LastCheckedAt *time.Time      `json:"lastCheckedAt,omitempty"`
 }
 
 func (s *Server) ListConnections(w http.ResponseWriter, r *http.Request) {
@@ -27,7 +30,7 @@ func (s *Server) ListConnections(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := s.Pool.Query(r.Context(), `
-		SELECT id, name, engine, dsn, fields, layout, last_used
+		SELECT id, name, engine, dsn, fields, layout, last_used, status, last_checked_at
 		FROM connections
 		WHERE user_id = $1
 		ORDER BY created_at ASC`, user.ID)
@@ -40,7 +43,7 @@ func (s *Server) ListConnections(w http.ResponseWriter, r *http.Request) {
 	conns := []Connection{}
 	for rows.Next() {
 		var c Connection
-		if err := rows.Scan(&c.ID, &c.Name, &c.Engine, &c.DSN, &c.Fields, &c.Layout, &c.LastUsed); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Engine, &c.DSN, &c.Fields, &c.Layout, &c.LastUsed, &c.Status, &c.LastCheckedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to read connections")
 			return
 		}

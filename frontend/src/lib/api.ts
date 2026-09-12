@@ -1,4 +1,4 @@
-import type { CardLayout, SavedConnection } from "@/lib/types";
+import type { CardLayout, ConnectionStatus, SavedConnection } from "@/lib/types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8080";
 
@@ -83,6 +83,22 @@ export function touchConnection(token: string, id: string, lastUsed: string): Pr
 export function deleteConnection(token: string, id: string): Promise<{ ok: boolean }> {
   return request(`/api/connections/${id}`, {
     method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export interface PingResult {
+  status: ConnectionStatus;
+  lastCheckedAt: string;
+  cached: boolean;
+}
+
+// The backend itself enforces a ~60s cache per connection, so this is safe
+// to call every time the Connections page loads — a repeat visit within
+// that window just gets the cached result back, no new network check.
+export function pingConnection(token: string, id: string): Promise<PingResult> {
+  return request(`/api/connections/${id}/ping`, {
+    method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
 }

@@ -56,6 +56,8 @@ export interface CardLayout {
   height: number;
 }
 
+export type ConnectionStatus = "unknown" | "online" | "offline";
+
 export interface SavedConnection {
   id: string;
   name: string;
@@ -64,4 +66,6 @@ export interface SavedConnection {
   lastUsed: string;
   fields: ConnectionFields;
   layout: CardLayout;
+  status?: ConnectionStatus;
+  lastCheckedAt?: string;
 }

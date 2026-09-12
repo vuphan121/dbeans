@@ -12,6 +12,7 @@ import {
 import { useConnectionsStore } from "@/state/connections";
 import { useUiStore } from "@/state/ui";
 import { requestOpenConnection } from "@/lib/openConnection";
+import { snapToGrid } from "@/lib/canvasBounds";
 import { ENGINES } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -38,13 +39,18 @@ export function ConnectionCard({ data, selected }: NodeProps) {
       onMouseLeave={() => setHovered(false)}
     >
       <NodeResizer
-        minWidth={220}
+        minWidth={240}
         minHeight={120}
         isVisible={hovered || selected}
         lineClassName="!border-border-focus"
         handleClassName="!h-2.5 !w-2.5 !rounded-[2px] !border !border-border-focus !bg-bg-app"
         onResizeEnd={(_, params) =>
-          updateLayout(connection!.id, { x: params.x, y: params.y, width: params.width, height: params.height })
+          updateLayout(connection!.id, {
+            x: snapToGrid(params.x),
+            y: snapToGrid(params.y),
+            width: snapToGrid(params.width),
+            height: snapToGrid(params.height),
+          })
         }
       />
       <div
@@ -79,6 +85,22 @@ export function ConnectionCard({ data, selected }: NodeProps) {
           </DropdownMenu>
         </div>
         <div className="mt-auto text-[11px] text-text-faint">{connection.lastUsed}</div>
+
+        <span
+          title={
+            connection.status === "online"
+              ? "Reachable"
+              : connection.status === "offline"
+                ? "Unreachable"
+                : "Reachability unknown"
+          }
+          className={cn(
+            "absolute bottom-3 right-3 h-2 w-2 rounded-full",
+            connection.status === "online" && "bg-success-dot",
+            connection.status === "offline" && "bg-error-dot",
+            (!connection.status || connection.status === "unknown") && "bg-border-control",
+          )}
+        />
 
         {isOpening && (
           <div className="absolute inset-0 flex items-center justify-center gap-2 rounded-[10px] bg-bg-surface/90 backdrop-blur-[1px]">

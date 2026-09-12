@@ -52,8 +52,15 @@ CREATE TABLE IF NOT EXISTS connections (
 	fields JSONB NOT NULL,
 	layout JSONB NOT NULL,
 	last_used TEXT NOT NULL DEFAULT 'just now',
+	status TEXT NOT NULL DEFAULT 'unknown',
+	last_checked_at TIMESTAMPTZ,
 	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- ADD COLUMN IF NOT EXISTS so this stays idempotent for databases that
+-- already had the connections table before status tracking existed.
+ALTER TABLE connections ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'unknown';
+ALTER TABLE connections ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_analytics_events_user_id ON analytics_events(user_id);

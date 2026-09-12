@@ -242,7 +242,7 @@ export default function AddConnection() {
             </Field>
           )}
 
-          <Field label="Name *">
+          <Field label="Name">
             <Input
               mono
               value={name}

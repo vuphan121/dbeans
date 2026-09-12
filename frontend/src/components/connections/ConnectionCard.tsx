@@ -1,18 +1,14 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { NodeResizer, type NodeProps } from "@xyflow/react";
-import { MoreHorizontal, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { EngineTag } from "@/components/ui/Badge";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/DropdownMenu";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/ContextMenu";
 import { useConnectionsStore } from "@/state/connections";
 import { useUiStore } from "@/state/ui";
 import { requestOpenConnection } from "@/lib/openConnection";
 import { snapToGrid } from "@/lib/canvasBounds";
+import { markContextMenuAction } from "@/lib/contextMenuGuard";
 import { ENGINES } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -53,62 +49,67 @@ export function ConnectionCard({ data, selected }: NodeProps) {
           })
         }
       />
-      <div
-        className={cn(
-          "relative flex h-full w-full cursor-pointer flex-col gap-3 rounded-[10px] border bg-bg-surface p-4 shadow-sm transition-colors",
-          selected ? "border-border-focus" : "border-border-default hover:border-border-control",
-        )}
-      >
-        <div className="flex items-start gap-2.5">
-          <EngineTag engine={connection.engine} size={30} />
-          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <div className="truncate text-[13.5px] font-medium text-text-primary">{connection.name}</div>
-            <div className="truncate text-[11px] text-text-faint">{ENGINES[connection.engine].label}</div>
-          </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => e.stopPropagation()}
-              className="flex w-5 shrink-0 items-center justify-center text-text-ghost outline-none hover:text-text-secondary"
-            >
-              <MoreHorizontal size={15} />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <DropdownMenuItem onClick={open}>Open</DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => removeConnection(connection!.id)}
-                className="text-error-dim data-[highlighted]:text-error-text"
-              >
-                Remove
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-        <div className="mt-auto text-[11px] text-text-faint">{connection.lastUsed}</div>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div
+            className={cn(
+              "relative flex h-full w-full cursor-pointer flex-col gap-3 rounded-[10px] border bg-bg-surface p-4 shadow-sm transition-colors",
+              selected ? "border-border-focus" : "border-border-default hover:border-border-control",
+            )}
+          >
+            <div className="flex items-start gap-2.5">
+              <EngineTag engine={connection.engine} size={30} />
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <div className="truncate text-[13.5px] font-medium text-text-primary">{connection.name}</div>
+                <div className="truncate text-[11px] text-text-faint">{ENGINES[connection.engine].label}</div>
+              </div>
+            </div>
+            <div className="mt-auto text-[11px] text-text-faint">{connection.lastUsed}</div>
 
-        <span
-          title={
-            connection.status === "online"
-              ? "Reachable"
-              : connection.status === "offline"
-                ? "Unreachable"
-                : "Reachability unknown"
-          }
-          className={cn(
-            "absolute right-2 top-2 h-2 w-2 rounded-full",
-            connection.status === "online" && "bg-success-dot",
-            connection.status === "offline" && "bg-error-dot",
-            (!connection.status || connection.status === "unknown") && "bg-border-control",
-          )}
-        />
+            <span
+              title={
+                connection.status === "online"
+                  ? "Reachable"
+                  : connection.status === "offline"
+                    ? "Unreachable"
+                    : "Reachability unknown"
+              }
+              className={cn(
+                "absolute right-2 top-2 h-2 w-2 rounded-full",
+                connection.status === "online" && "bg-success-dot",
+                connection.status === "offline" && "bg-error-dot",
+                (!connection.status || connection.status === "unknown") && "bg-border-control",
+              )}
+            />
 
-        {isOpening && (
-          <div className="absolute inset-0 flex items-center justify-center gap-2 rounded-[10px] bg-bg-surface/90 backdrop-blur-[1px]">
-            <Loader2 size={14} className="animate-spin text-text-tertiary" />
-            <span className="text-[12px] text-text-secondary">Opening…</span>
+            {isOpening && (
+              <div className="absolute inset-0 flex items-center justify-center gap-2 rounded-[10px] bg-bg-surface/90 backdrop-blur-[1px]">
+                <Loader2 size={14} className="animate-spin text-text-tertiary" />
+                <span className="text-[12px] text-text-secondary">Opening…</span>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem
+            onClick={() => {
+              markContextMenuAction();
+              open();
+            }}
+          >
+            Open
+          </ContextMenuItem>
+          <ContextMenuItem
+            onClick={() => {
+              markContextMenuAction();
+              removeConnection(connection!.id);
+            }}
+            className="text-error-dim data-[highlighted]:text-error-text"
+          >
+            Remove
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
     </div>
   );
 }

@@ -1,33 +1,12 @@
 import { useMemo } from "react";
 import CodeMirror from "@uiw/react-codemirror";
-import { sql, PostgreSQL } from "@codemirror/lang-sql";
-import { autocompletion, type CompletionSource } from "@codemirror/autocomplete";
+import { sql, PostgreSQL, type SQLNamespace } from "@codemirror/lang-sql";
+import { autocompletion, acceptCompletion } from "@codemirror/autocomplete";
 import { keymap } from "@codemirror/view";
 import { Prec } from "@codemirror/state";
 import { darkSqlTheme, lightSqlTheme } from "./sqlEditorTheme";
-import { AUTOCOMPLETE_SUGGESTIONS, OTHER_TABLES, USER_COLUMNS } from "@/mock/sqlFixtures";
-
-const schemaCompletions = [
-  ...OTHER_TABLES.map((name) => ({ label: name, detail: "table" })),
-  { label: "users", detail: "table" },
-  ...USER_COLUMNS.map((c) => ({ label: c.name, detail: `column · ${c.type}` })),
-  ...AUTOCOMPLETE_SUGGESTIONS,
-];
-
-const schemaSource: CompletionSource = (context) => {
-  const word = context.matchBefore(/[\w]*/);
-  if (!word || (word.from === word.to && !context.explicit)) return null;
-  const text = word.text.toLowerCase();
-  const options = schemaCompletions
-    .filter((c) => c.label.toLowerCase().startsWith(text))
-    .map((c) => ({
-      label: c.label,
-      detail: c.detail,
-      type: c.detail.startsWith("table") ? "class" : c.detail.startsWith("column") ? "property" : "keyword",
-    }));
-  if (!options.length) return null;
-  return { from: word.from, options };
-};
+import { templateHighlight } from "./templateHighlight";
+import { useSchemaStore } from "@/state/schema";
 
 export function SqlEditor({
   value,
@@ -35,17 +14,39 @@ export function SqlEditor({
   theme,
   fontSize,
   onRun,
+  connectionId,
 }: {
   value: string;
   onChange: (v: string) => void;
   theme: "dark" | "light";
   fontSize: number;
   onRun: () => void;
+  connectionId: string;
 }) {
+  const schema = useSchemaStore((s) => s.byConnectionId[connectionId]?.schema);
+
+  // @codemirror/lang-sql's own schema-aware completion combines keyword
+  // completion (so "sel" suggests SELECT, etc.) with table/column
+  // completion built from this namespace — far more capable than hand-
+  // rolling a prefix matcher, and it already supports the standard
+  // arrow-key/mouse-wheel picker navigation.
+  const sqlNamespace = useMemo(() => {
+    const namespace: SQLNamespace = {};
+    for (const group of schema?.schemas ?? []) {
+      const tables: Record<string, string[]> = {};
+      for (const table of group.tables) {
+        tables[table.name] = table.columns.map((c) => c.name);
+      }
+      namespace[group.name] = tables;
+    }
+    return namespace;
+  }, [schema]);
+
   const extensions = useMemo(
     () => [
-      sql({ dialect: PostgreSQL }),
-      autocompletion({ override: [schemaSource], activateOnTyping: true }),
+      sql({ dialect: PostgreSQL, schema: sqlNamespace, defaultSchema: "public" }),
+      autocompletion({ activateOnTyping: true }),
+      templateHighlight,
       Prec.highest(
         keymap.of([
           {
@@ -55,10 +56,14 @@ export function SqlEditor({
               return true;
             },
           },
+          // acceptCompletion is a no-op (returns false, falling through to
+          // normal Tab behavior) when no completion is open/selected — it's
+          // specifically designed to be safe to bind directly to Tab.
+          { key: "Tab", run: acceptCompletion },
         ]),
       ),
     ],
-    [onRun],
+    [onRun, sqlNamespace],
   );
 
   return (

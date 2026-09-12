@@ -8,10 +8,12 @@ interface SettingsState {
   editorFontSize: number;
   compactGrid: boolean;
   autoLockMinutes: number;
+  sidebarExpanded: boolean;
   setTheme: (t: ThemePreference) => void;
   setEditorFontSize: (n: number) => void;
   setCompactGrid: (v: boolean) => void;
   setAutoLockMinutes: (n: number) => void;
+  setSidebarExpanded: (v: boolean) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -21,10 +23,12 @@ export const useSettingsStore = create<SettingsState>()(
       editorFontSize: 13,
       compactGrid: true,
       autoLockMinutes: 15,
+      sidebarExpanded: false,
       setTheme: (theme) => set({ theme }),
       setEditorFontSize: (editorFontSize) => set({ editorFontSize }),
       setCompactGrid: (compactGrid) => set({ compactGrid }),
       setAutoLockMinutes: (autoLockMinutes) => set({ autoLockMinutes }),
+      setSidebarExpanded: (sidebarExpanded) => set({ sidebarExpanded }),
     }),
     { name: "dbeans.settings" },
   ),

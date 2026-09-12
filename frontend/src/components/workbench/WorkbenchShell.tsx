@@ -1,8 +1,6 @@
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { Settings as SettingsIcon } from "lucide-react";
 import { Logo } from "@/components/Logo";
-import { IconButton } from "@/components/ui/IconButton";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { comboLabel } from "@/lib/platform";
 
@@ -37,9 +35,6 @@ export function WorkbenchShell({
             </span>
           </button>
           <ThemeToggle size={26} />
-          <IconButton onClick={() => navigate("/settings")} aria-label="Settings">
-            <SettingsIcon size={12} />
-          </IconButton>
         </div>
       </div>
 

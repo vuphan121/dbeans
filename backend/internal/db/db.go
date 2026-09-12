@@ -62,10 +62,48 @@ CREATE TABLE IF NOT EXISTS connections (
 ALTER TABLE connections ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'unknown';
 ALTER TABLE connections ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMPTZ;
 
+-- A job = a saved SQL query + a target connection + a cron schedule, with
+-- optional dependencies on other jobs, retry policy, and a post-run check
+-- against the query's own result. See docs/PRD.md "Scheduled jobs".
+CREATE TABLE IF NOT EXISTS jobs (
+	id TEXT PRIMARY KEY,
+	user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	sql TEXT NOT NULL,
+	cron_expr TEXT NOT NULL,
+	enabled BOOLEAN NOT NULL DEFAULT true,
+	depends_on JSONB NOT NULL DEFAULT '[]',
+	retry_limit INT NOT NULL DEFAULT 0,
+	retry_delay_seconds INT NOT NULL DEFAULT 30,
+	check_mode TEXT NOT NULL DEFAULT 'none',
+	layout JSONB NOT NULL,
+	next_run_at TIMESTAMPTZ,
+	last_run_at TIMESTAMPTZ,
+	last_status TEXT NOT NULL DEFAULT 'never_run',
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS job_runs (
+	id BIGSERIAL PRIMARY KEY,
+	job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+	status TEXT NOT NULL,
+	attempts INT NOT NULL DEFAULT 1,
+	rows_affected INT,
+	error TEXT,
+	triggered_by TEXT NOT NULL DEFAULT 'tick',
+	started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	finished_at TIMESTAMPTZ,
+	duration_ms BIGINT
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_analytics_events_user_id ON analytics_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_analytics_events_created_at ON analytics_events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_connections_user_id ON connections(user_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_user_id ON jobs(user_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_next_run_at ON jobs(next_run_at) WHERE enabled;
+CREATE INDEX IF NOT EXISTS idx_job_runs_job_id ON job_runs(job_id, started_at DESC);
 `
 
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {

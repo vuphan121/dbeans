@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { DEFAULT_QUERY } from "@/mock/sqlFixtures";
 
 export type TabKind = "sql" | "table";
 
@@ -9,6 +8,10 @@ export interface WorkbenchTab {
   title: string;
   dirty?: boolean;
   sql?: string;
+  // Set once this tab has been saved as (or opened from) a query. Editing
+  // the tab never writes back to the saved query automatically — only an
+  // explicit "Save" does that (see TabStrip's context menu).
+  snippetId?: string;
 }
 
 interface WorkbenchState {
@@ -19,20 +22,28 @@ interface WorkbenchState {
   closeTab: (id: string) => void;
   updateTabSql: (id: string, sql: string) => void;
   openTable: (tableName: string) => void;
-  openSnippet: (name: string, sql: string) => void;
+  openSnippet: (snippetId: string, name: string, sql: string) => void;
+  linkTabToSnippet: (tabId: string, snippetId: string, name: string) => void;
+  renameTabForSnippet: (tabId: string, name: string) => void;
+  unlinkSnippetFromTab: (tabId: string) => void;
 }
 
-const initialTabs: WorkbenchTab[] = [
-  { id: "tab_1", kind: "sql", title: "churn_by_plan", sql: DEFAULT_QUERY },
-  { id: "tab_2", kind: "table", title: "public.users" },
-  { id: "tab_3", kind: "sql", title: "untitled 3", dirty: true, sql: "" },
-];
+const initialTabs: WorkbenchTab[] = [{ id: "tab_1", kind: "sql", title: "untitled 1", sql: "" }];
 
 export const useWorkbenchStore = create<WorkbenchState>()((set, get) => ({
   tabs: initialTabs,
   activeTabId: "tab_1",
 
   setActiveTab: (id) => set({ activeTabId: id }),
+
+  linkTabToSnippet: (tabId, snippetId, name) =>
+    set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, snippetId, title: name } : t)) })),
+
+  renameTabForSnippet: (tabId, name) =>
+    set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, title: name } : t)) })),
+
+  unlinkSnippetFromTab: (tabId) =>
+    set((s) => ({ tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, snippetId: undefined } : t)) })),
 
   addTab: () =>
     set((s) => {
@@ -57,40 +68,33 @@ export const useWorkbenchStore = create<WorkbenchState>()((set, get) => ({
       tabs: s.tabs.map((t) => (t.id === id ? { ...t, sql, dirty: true } : t)),
     })),
 
-  // "users" has real mock rows, so it opens as a browsable table tab like the
-  // design shows. Every other table doesn't have seeded row data yet, so it
-  // opens as a prefilled SQL tab instead — still real, just honest about
-  // there being no live query engine behind it yet.
+  // tableName is a qualified "schema.table" name from the real schema tree.
+  // Opens a prefilled, editable SQL tab that browses it — the user still has
+  // to hit Run, same as any other query.
   openTable: (tableName) => {
-    if (tableName === "users") {
-      const existing = get().tabs.find((t) => t.kind === "table" && t.title === "public.users");
-      if (existing) {
-        set({ activeTabId: existing.id });
-        return;
-      }
-      const id = `tab_${Date.now().toString(36)}`;
-      set((s) => ({ tabs: [...s.tabs, { id, kind: "table", title: "public.users" }], activeTabId: id }));
-      return;
-    }
     const existing = get().tabs.find((t) => t.kind === "sql" && t.title === tableName);
     if (existing) {
       set({ activeTabId: existing.id });
       return;
     }
+    const [schema, table] = tableName.includes(".") ? tableName.split(".") : ["public", tableName];
     const id = `tab_${Date.now().toString(36)}`;
     set((s) => ({
-      tabs: [...s.tabs, { id, kind: "sql", title: tableName, sql: `select * from public.${tableName} limit 100;\n` }],
+      tabs: [
+        ...s.tabs,
+        { id, kind: "sql", title: tableName, sql: `select * from "${schema}"."${table}" limit 200;\n` },
+      ],
       activeTabId: id,
     }));
   },
 
-  openSnippet: (name, sql) => {
-    const existing = get().tabs.find((t) => t.kind === "sql" && t.title === name);
+  openSnippet: (snippetId, name, sql) => {
+    const existing = get().tabs.find((t) => t.snippetId === snippetId);
     if (existing) {
-      set((s) => ({ tabs: s.tabs.map((t) => (t.id === existing.id ? { ...t, sql } : t)), activeTabId: existing.id }));
+      set({ activeTabId: existing.id });
       return;
     }
     const id = `tab_${Date.now().toString(36)}`;
-    set((s) => ({ tabs: [...s.tabs, { id, kind: "sql", title: name, sql }], activeTabId: id }));
+    set((s) => ({ tabs: [...s.tabs, { id, kind: "sql", title: name, sql, snippetId }], activeTabId: id }));
   },
 }));

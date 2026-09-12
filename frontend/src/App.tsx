@@ -5,21 +5,31 @@ import Connections from "@/pages/Connections";
 import AddConnection from "@/pages/AddConnection";
 import Workbench from "@/pages/Workbench";
 import Settings from "@/pages/Settings";
+import Jobs from "@/pages/Jobs";
+import AddJob from "@/pages/AddJob";
+import { AppNavRail } from "@/components/AppNavRail";
 import { useAuthStore } from "@/state/auth";
 import { useConnectionsStore } from "@/state/connections";
+import { useJobsStore } from "@/state/jobs";
 import { applyThemeToDocument, useSettingsStore, watchSystemTheme } from "@/state/settings";
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { isUnlocked, checking } = useAuthStore();
   if (checking) return null;
   if (!isUnlocked) return <Navigate to="/login" replace />;
-  return <>{children}</>;
+  return (
+    <div className="flex h-full">
+      <AppNavRail />
+      <div className="h-full min-w-0 flex-1">{children}</div>
+    </div>
+  );
 }
 
 export default function App() {
   const theme = useSettingsStore((s) => s.theme);
   const { restoreSession, isUnlocked, token } = useAuthStore();
   const loadConnections = useConnectionsStore((s) => s.loadConnections);
+  const loadJobs = useJobsStore((s) => s.loadJobs);
 
   useEffect(() => {
     watchSystemTheme();
@@ -31,8 +41,11 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    if (isUnlocked && token) loadConnections();
-  }, [isUnlocked, token, loadConnections]);
+    if (isUnlocked && token) {
+      loadConnections();
+      loadJobs();
+    }
+  }, [isUnlocked, token, loadConnections, loadJobs]);
 
   return (
     <BrowserRouter>
@@ -67,6 +80,30 @@ export default function App() {
           element={
             <RequireAuth>
               <Settings />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/jobs"
+          element={
+            <RequireAuth>
+              <Jobs />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/jobs/new"
+          element={
+            <RequireAuth>
+              <AddJob />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/jobs/:id/edit"
+          element={
+            <RequireAuth>
+              <AddJob />
             </RequireAuth>
           }
         />

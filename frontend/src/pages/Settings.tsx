@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Copy, Check } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Switch } from "@/components/ui/Switch";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
@@ -9,8 +9,10 @@ import { EngineTag } from "@/components/ui/Badge";
 import { useSettingsStore } from "@/state/settings";
 import { useConnectionsStore } from "@/state/connections";
 import { useSnippetsStore } from "@/state/snippets";
+import { useJobsStore } from "@/state/jobs";
 import { useAuthStore } from "@/state/auth";
 import { comboLabel } from "@/lib/platform";
+import { getJobsTickInfo, API_URL } from "@/lib/api";
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -26,10 +28,35 @@ export default function Settings() {
   } = useSettingsStore();
   const { connections, removeConnection } = useConnectionsStore();
   const { snippets, removeSnippet } = useSnippetsStore();
-  const { username, lock } = useAuthStore();
+  const jobs = useJobsStore((s) => s.jobs);
+  const { username, lock, token } = useAuthStore();
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [pwMessage, setPwMessage] = useState<string | null>(null);
+  const [tickUrl, setTickUrl] = useState<string | null>(null);
+  const [tickUrlError, setTickUrlError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!token) return;
+    getJobsTickInfo(token)
+      .then((info) => {
+        if (!info.secret) {
+          setTickUrlError("CRON_SECRET isn't set on the backend yet — add it to backend/.env and restart the server.");
+          return;
+        }
+        setTickUrl(`${API_URL}${info.path}?secret=${info.secret}`);
+      })
+      .catch(() => setTickUrlError("Couldn't load the tick URL."));
+  }, [token]);
+
+  function copyTickUrl() {
+    if (!tickUrl) return;
+    navigator.clipboard.writeText(tickUrl).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    });
+  }
 
   function handleUpdatePassword() {
     // Login is real (backend + Postgres), but there's no change-password
@@ -153,8 +180,42 @@ export default function Settings() {
           </Section>
 
           <Section
-            title="Snippets"
-            action={<span className="text-[12px] text-text-tertiary">+ New snippet</span>}
+            title="Scheduled queries"
+            action={
+              <button onClick={() => navigate("/jobs")} className="text-[12px] text-text-tertiary hover:text-text-primary">
+                Open board →
+              </button>
+            }
+          >
+            <div className="flex flex-col gap-3 p-4">
+              <div className="text-[11.5px] text-text-faint">
+                dbeans has no built-in scheduler — an external service like{" "}
+                <span className="text-text-secondary">cron-job.org</span> hits this one URL on a fixed interval (every
+                15 minutes minimum), and dbeans itself decides which of your {jobs.length} scheduled quer
+                {jobs.length === 1 ? "y is" : "ies are"} due. Paste this exact URL in as a GET request there — you
+                only need to configure it once, not per job.
+              </div>
+              {tickUrlError ? (
+                <div className="rounded-[7px] border border-error-border bg-error-bg px-3 py-2 text-[11.5px] text-error-text">
+                  {tickUrlError}
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 overflow-x-auto rounded-[7px] border border-border-input bg-bg-inset px-[11px] py-2 font-mono text-[11.5px] text-text-secondary whitespace-nowrap">
+                    {tickUrl ?? "Loading…"}
+                  </div>
+                  <Button variant="secondary" size="sm" onClick={copyTickUrl} disabled={!tickUrl}>
+                    {copied ? <Check size={12} /> : <Copy size={12} />}
+                    {copied ? "Copied" : "Copy"}
+                  </Button>
+                </div>
+              )}
+            </div>
+          </Section>
+
+          <Section
+            title="Queries"
+            action={<span className="text-[12px] text-text-tertiary">+ New query</span>}
           >
             {snippets.map((s) => (
               <div key={s.id} className="flex h-11 items-center gap-3 border-b border-border-faint px-3.5 last:border-b-0">

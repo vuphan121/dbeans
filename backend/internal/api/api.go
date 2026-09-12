@@ -12,7 +12,8 @@ import (
 )
 
 type Server struct {
-	Pool *pgxpool.Pool
+	Pool       *pgxpool.Pool
+	CronSecret string
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

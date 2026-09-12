@@ -16,97 +16,66 @@ import "@xyflow/react/dist/style.css";
 import { Search, Plus } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/Button";
-import { useConnectionsStore } from "@/state/connections";
-import { useUiStore } from "@/state/ui";
-import { requestOpenConnection } from "@/lib/openConnection";
-import { shouldSuppressNodeClick } from "@/lib/contextMenuGuard";
-import { comboLabel, isModPressed, isTypingTarget } from "@/lib/platform";
-import { CANVAS_BOUNDS, FIELD_CENTER, GRID_UNIT, snapToGrid } from "@/lib/canvasBounds";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { ConnectionCard } from "@/components/connections/ConnectionCard";
+import { useJobsStore } from "@/state/jobs";
+import { comboLabel, isTypingTarget } from "@/lib/platform";
+import { CANVAS_BOUNDS, FIELD_CENTER, GRID_UNIT, snapToGrid } from "@/lib/canvasBounds";
+import { JobCard } from "@/components/jobs/JobCard";
+import { shouldSuppressNodeClick } from "@/lib/contextMenuGuard";
 
-const nodeTypes = { connectionCard: ConnectionCard };
+const nodeTypes = { jobCard: JobCard };
 
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 1.5;
 
-function buildNode(connectionId: string, layout: { x: number; y: number; width: number; height: number }): Node {
+function buildNode(jobId: string, layout: { x: number; y: number; width: number; height: number }): Node {
   return {
-    id: connectionId,
-    type: "connectionCard",
+    id: jobId,
+    type: "jobCard",
     position: { x: layout.x, y: layout.y },
     width: layout.width,
     height: layout.height,
-    data: { connectionId },
+    data: { jobId },
   };
 }
 
-export default function Connections() {
+export default function Jobs() {
   const navigate = useNavigate();
-  const connections = useConnectionsStore((s) => s.connections);
-  const updateLayout = useConnectionsStore((s) => s.updateLayout);
-  const setActiveConnection = useConnectionsStore((s) => s.setActiveConnection);
-  const pingConnection = useConnectionsStore((s) => s.pingConnection);
+  const jobs = useJobsStore((s) => s.jobs);
+  const loadJobs = useJobsStore((s) => s.loadJobs);
+  const updateLayout = useJobsStore((s) => s.updateLayout);
   const [query, setQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    loadJobs();
+  }, [loadJobs]);
 
   function focusSearch() {
     searchInputRef.current?.focus();
     searchInputRef.current?.select();
   }
 
-  // Ping each connection once per page visit. The backend caches results
-  // for ~60s, so this is cheap even if you refresh repeatedly — only ping
-  // ids we haven't already asked about this mount, since a ping's own
-  // status update touches `connections` and would otherwise re-trigger.
-  const pingedIdsRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    for (const c of connections) {
-      if (!pingedIdsRef.current.has(c.id)) {
-        pingedIdsRef.current.add(c.id);
-        pingConnection(c.id);
-      }
-    }
-  }, [connections, pingConnection]);
+  const [nodes, setNodes] = useState<Node[]>(() => jobs.map((j) => buildNode(j.id, j.layout)));
 
-  // Defensive reset: if a previous "open" got interrupted (e.g. browser
-  // back-navigation mid-transition), don't leave the board stuck refusing
-  // clicks because openingConnectionId is still set from last time.
-  useEffect(() => {
-    useUiStore.getState().setOpeningConnectionId(null);
-  }, []);
-  const [nodes, setNodes] = useState<Node[]>(() =>
-    connections.map((c) => buildNode(c.id, c.layout)),
-  );
-
-  // Resync when connections are added/removed, without clobbering the live
-  // (possibly mid-drag) position/size of nodes that already exist.
   useEffect(() => {
     setNodes((prev) => {
       const byId = new Map(prev.map((n) => [n.id, n]));
-      return connections.map((c) => byId.get(c.id) ?? buildNode(c.id, c.layout));
+      return jobs.map((j) => byId.get(j.id) ?? buildNode(j.id, j.layout));
     });
-  }, [connections]);
+  }, [jobs]);
 
   const matchesQuery = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return null;
-    return new Set(
-      connections.filter((c) => c.name.toLowerCase().includes(q) || c.dsn.toLowerCase().includes(q)).map((c) => c.id),
-    );
-  }, [connections, query]);
+    return new Set(jobs.filter((j) => j.name.toLowerCase().includes(q)).map((j) => j.id));
+  }, [jobs, query]);
 
   const visibleNodes = useMemo(
     () => (matchesQuery ? nodes.filter((n) => matchesQuery.has(n.id)) : nodes),
     [nodes, matchesQuery],
   );
 
-  // Snap drag and resize live (not just at drag-end) — round each
-  // in-progress position/dimensions change to the (offset) grid so the box
-  // edge tracks a dot the whole time you're dragging, not just once you let
-  // go. This is done by hand rather than via React Flow's own snapToGrid
-  // prop because that snaps to bare multiples of the grid unit, and the
-  // actual dot grid sits half a cell off from that (see canvasBounds.ts).
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     const snapped = changes.map((c) => {
       if (c.type === "dimensions" && c.dimensions) {
@@ -120,16 +89,13 @@ export default function Connections() {
     setNodes((nds) => applyNodeChanges(snapped, nds));
   }, []);
 
-  // `fitView` only has something to fit once there are cards — with none,
-  // land on the middle of the field instead of wherever the default
-  // viewport happens to be.
   const onInit = useCallback(
     (instance: ReactFlowInstance) => {
-      if (connections.length === 0) {
+      if (jobs.length === 0) {
         instance.setCenter(FIELD_CENTER.x, FIELD_CENTER.y, { zoom: 1 });
       }
     },
-    [connections.length],
+    [jobs.length],
   );
 
   const onNodeDragStop = useCallback(
@@ -138,39 +104,31 @@ export default function Connections() {
         x: snapToGrid(node.position.x),
         y: snapToGrid(node.position.y),
         width: node.width ?? 280,
-        height: node.height ?? 148,
+        height: node.height ?? 160,
       });
     },
     [updateLayout],
   );
 
-  // React Flow's own click detection (vs. drag) is far more reliable here
-  // than a native dblclick on the card — that one could silently swallow
-  // the second click if there was any pointer movement between the two.
-  // React Flow's onNodeClick fires on pointerup regardless of which mouse
-  // button was pressed — without this guard, right-clicking a card to open
-  // its context menu also fires this handler and navigates to /workbench
-  // out from under the menu a moment later.
+  // Guard against event.button !== 0: React Flow's onNodeClick fires on any
+  // pointerup regardless of mouse button, so without this a right-click to
+  // open the card's context menu would also navigate to the edit page.
   const onNodeClick = useCallback(
     (event: ReactMouseEvent, node: Node) => {
       if (event.button !== 0 || shouldSuppressNodeClick()) return;
-      requestOpenConnection(node.id, navigate, setActiveConnection);
+      navigate(`/jobs/${node.id}/edit`);
     },
-    [navigate, setActiveConnection],
+    [navigate],
   );
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      // Bare "N", not Ctrl/Cmd+N — that combo is reserved by every browser
-      // for "new window" and can't be intercepted from the page.
       if (e.key.toLowerCase() === "n" && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingTarget(e.target)) {
         e.preventDefault();
-        navigate("/connections/new");
+        navigate("/jobs/new");
         return;
       }
-      // Ctrl/Cmd+K jumps into search here — has to preventDefault or Chrome
-      // hijacks it to focus the address bar for a web search instead.
-      if (isModPressed(e) && e.key.toLowerCase() === "k") {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         focusSearch();
       }
@@ -182,7 +140,11 @@ export default function Connections() {
   return (
     <div className="flex h-full flex-col bg-bg-app">
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-border-subtle px-4">
-        <Logo size={20} onClick={() => navigate("/connections")} />
+        <div className="flex items-center gap-3">
+          <Logo size={20} onClick={() => navigate("/connections")} />
+          <div className="h-4 w-px bg-border-subtle" />
+          <div className="text-[13px] font-medium text-text-secondary">Scheduled queries</div>
+        </div>
         <div className="flex items-center gap-2">
           <button
             onClick={focusSearch}
@@ -224,15 +186,22 @@ export default function Connections() {
                     ref={searchInputRef}
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search connections"
+                    placeholder="Search scheduled queries"
                     className="w-full bg-transparent text-[12.5px] text-text-primary placeholder:text-text-quiet outline-none"
                   />
                 </div>
-                <Button variant="primary" size="sm" onClick={() => navigate("/connections/new")}>
-                  <Plus size={13} /> Add
+                <Button variant="primary" size="sm" onClick={() => navigate("/jobs/new")}>
+                  <Plus size={13} /> New job
                 </Button>
               </div>
             </Panel>
+            {jobs.length === 0 && (
+              <Panel position="top-left">
+                <div className="ml-2 mt-2 max-w-[280px] rounded-[8px] border border-border-default bg-bg-surface/90 px-3.5 py-3 text-[11.5px] text-text-faint backdrop-blur">
+                  No scheduled queries yet. Add one to run a saved SQL query against a connection on a cron schedule.
+                </div>
+              </Panel>
+            )}
           </ReactFlow>
         </ReactFlowProvider>
       </div>

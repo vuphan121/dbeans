@@ -10,10 +10,9 @@ import { Button } from "@/components/ui/Button";
 import { useWorkbenchStore } from "@/state/workbench";
 import { useSettingsStore } from "@/state/settings";
 import { useAuthStore } from "@/state/auth";
-import { trackEvent } from "@/lib/api";
+import { trackEvent, runQuery as runQueryRequest, ApiError } from "@/lib/api";
 import { comboLabel } from "@/lib/platform";
-import { USER_ROWS } from "@/mock/sqlFixtures";
-import type { SavedConnection } from "@/lib/types";
+import type { QueryResult, SavedConnection } from "@/lib/types";
 
 export function SqlWorkbench({
   connection,
@@ -26,41 +25,49 @@ export function SqlWorkbench({
   const { theme, editorFontSize } = useSettingsStore();
   const token = useAuthStore((s) => s.token);
   const resolvedTheme = theme === "system" ? (document.documentElement.getAttribute("data-theme") as "dark" | "light" | null) ?? "dark" : theme;
-  const [lastRunMs, setLastRunMs] = useState(38);
   const [running, setRunning] = useState(false);
   const [editorHeight, setEditorHeight] = useState(296);
+  const [resultByTab, setResultByTab] = useState<Record<string, QueryResult>>({});
+  const [errorByTab, setErrorByTab] = useState<Record<string, string>>({});
 
   function resizeEditor(deltaY: number) {
     setEditorHeight((h) => Math.min(640, Math.max(140, h + deltaY)));
   }
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
+  const result = activeTab ? resultByTab[activeTab.id] : undefined;
+  const error = activeTab ? errorByTab[activeTab.id] : undefined;
 
-  function runQuery() {
+  async function runQuery() {
+    if (!activeTab?.sql?.trim() || !token) return;
+    const tabId = activeTab.id;
+    const sql = activeTab.sql;
     setRunning(true);
-    const start = performance.now();
-    window.setTimeout(() => {
-      const ms = Math.round(performance.now() - start) + 12;
-      setLastRunMs(ms);
+    setErrorByTab((e) => ({ ...e, [tabId]: "" }));
+    try {
+      const res = await runQueryRequest(token, connection.id, sql);
+      setResultByTab((r) => ({ ...r, [tabId]: res }));
+      trackEvent(token, "query_run", {
+        connectionId: connection.id,
+        engine: connection.engine,
+        sql,
+        durationMs: res.durationMs,
+      });
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : "Failed to run query";
+      setErrorByTab((e) => ({ ...e, [tabId]: message }));
+    } finally {
       setRunning(false);
-      if (token) {
-        trackEvent(token, "query_run", {
-          connectionId: connection.id,
-          engine: connection.engine,
-          sql: activeTab?.sql,
-          durationMs: ms,
-        });
-      }
-    }, 220);
+    }
   }
 
   return (
     <WorkbenchShell
       onOpenPalette={onOpenPalette}
-      sidebar={<SchemaTree />}
+      sidebar={<SchemaTree connectionId={connection.id} />}
       topBarCenter={<TabStrip />}
     >
-      {activeTab?.kind === "sql" ? (
+      {activeTab && (
         <>
           <div className="relative shrink-0" style={{ height: editorHeight }}>
             <SqlEditor
@@ -69,6 +76,7 @@ export function SqlWorkbench({
               theme={resolvedTheme}
               fontSize={editorFontSize}
               onRun={runQuery}
+              connectionId={connection.id}
             />
             <div className="pointer-events-none absolute right-3.5 top-3 flex gap-1.5">
               <Button variant="secondary" size="sm" className="pointer-events-auto">
@@ -80,13 +88,23 @@ export function SqlWorkbench({
             </div>
           </div>
           <ResizeDivider onDrag={resizeEditor} />
-          <StatusBar rows={USER_ROWS.length} ms={lastRunMs} connectionName={connection.name} schema="public" />
-          <ResultsGrid rows={USER_ROWS} />
-        </>
-      ) : (
-        <>
-          <StatusBar rows={USER_ROWS.length} ms={lastRunMs} connectionName={connection.name} schema="public" />
-          <ResultsGrid rows={USER_ROWS} />
+          {result && (
+            <StatusBar
+              rows={result.rowCount}
+              ms={result.durationMs}
+              connectionName={connection.name}
+              schema={"database" in connection.fields ? connection.fields.database : ""}
+            />
+          )}
+          {error ? (
+            <div className="flex flex-1 items-start justify-center overflow-y-auto bg-bg-app p-6">
+              <div className="max-w-xl rounded-[8px] border border-error-dim/40 bg-error-dim/10 px-4 py-3 font-mono text-[12px] text-error-text">
+                {error}
+              </div>
+            </div>
+          ) : (
+            <ResultsGrid result={result} />
+          )}
         </>
       )}
     </WorkbenchShell>

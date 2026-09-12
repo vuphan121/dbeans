@@ -57,7 +57,12 @@ func main() {
 		}
 	}
 
-	s := &api.Server{Pool: pool}
+	cronSecret := os.Getenv("CRON_SECRET")
+	if cronSecret == "" {
+		log.Println("warning: CRON_SECRET is not set — /api/jobs/tick will reject every request until it is")
+	}
+
+	s := &api.Server{Pool: pool, CronSecret: cronSecret}
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -65,7 +70,7 @@ func main() {
 	r.Use(middleware.Timeout(15 * time.Second))
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   allowedOrigins,
-		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Content-Type", "Authorization"},
 		AllowCredentials: true,
 		MaxAge:           300,
@@ -82,6 +87,18 @@ func main() {
 	r.Patch("/api/connections/{id}", s.UpdateConnection)
 	r.Delete("/api/connections/{id}", s.DeleteConnection)
 	r.Post("/api/connections/{id}/ping", s.PingConnection)
+	r.Get("/api/connections/{id}/schema", s.GetConnectionSchema)
+	r.Post("/api/connections/{id}/query", s.RunConnectionQuery)
+
+	r.Get("/api/jobs", s.ListJobs)
+	r.Post("/api/jobs", s.CreateJob)
+	r.Put("/api/jobs/{id}", s.UpdateJob)
+	r.Patch("/api/jobs/{id}", s.UpdateJobLayout)
+	r.Delete("/api/jobs/{id}", s.DeleteJob)
+	r.Post("/api/jobs/{id}/run", s.RunJobNow)
+	r.Get("/api/jobs/{id}/runs", s.ListJobRuns)
+	r.Get("/api/jobs/tick", s.JobsTick)
+	r.Get("/api/jobs/tick-info", s.JobsTickInfo)
 
 	log.Printf("dbeans backend listening on :%s", port)
 	if err := http.ListenAndServe(":"+port, r); err != nil {

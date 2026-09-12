@@ -69,3 +69,66 @@ export interface SavedConnection {
   status?: ConnectionStatus;
   lastCheckedAt?: string;
 }
+
+export interface ColumnInfo {
+  name: string;
+  type: string;
+}
+
+export interface TableInfo {
+  name: string;
+  kind: "table" | "view";
+  columns: ColumnInfo[];
+}
+
+export interface SchemaGroup {
+  name: string;
+  tables: TableInfo[];
+}
+
+export interface ConnectionSchema {
+  database: string;
+  schemas: SchemaGroup[];
+}
+
+export interface QueryResult {
+  columns: ColumnInfo[];
+  rows: (string | null)[][];
+  rowCount: number;
+  truncated: boolean;
+  durationMs: number;
+  command: string;
+}
+
+export type CheckMode = "none" | "fail_if_no_rows" | "fail_if_rows";
+export type JobStatus = "never_run" | "success" | "failed" | "blocked";
+
+export interface ScheduledJob {
+  id: string;
+  connectionId: string;
+  name: string;
+  sql: string;
+  cronExpr: string;
+  enabled: boolean;
+  dependsOn: string[];
+  retryLimit: number;
+  retryDelaySeconds: number;
+  checkMode: CheckMode;
+  layout: CardLayout;
+  nextRunAt?: string;
+  lastRunAt?: string;
+  lastStatus: JobStatus;
+}
+
+export interface JobRun {
+  id: number;
+  jobId: string;
+  status: "success" | "failed" | "blocked";
+  attempts: number;
+  rowsAffected?: number;
+  error?: string;
+  triggeredBy: "tick" | "manual";
+  startedAt: string;
+  finishedAt?: string;
+  durationMs?: number;
+}

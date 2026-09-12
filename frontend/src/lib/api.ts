@@ -1,6 +1,14 @@
-import type { CardLayout, ConnectionStatus, SavedConnection } from "@/lib/types";
+import type {
+  CardLayout,
+  ConnectionSchema,
+  ConnectionStatus,
+  JobRun,
+  QueryResult,
+  SavedConnection,
+  ScheduledJob,
+} from "@/lib/types";
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8080";
+export const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8080";
 
 export class ApiError extends Error {
   status: number;
@@ -101,4 +109,65 @@ export function pingConnection(token: string, id: string): Promise<PingResult> {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
   });
+}
+
+export function getConnectionSchema(token: string, id: string): Promise<ConnectionSchema> {
+  return request(`/api/connections/${id}/schema`, { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export function runQuery(token: string, id: string, sql: string): Promise<QueryResult> {
+  return request(`/api/connections/${id}/query`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ sql }),
+  });
+}
+
+export function listJobs(token: string): Promise<ScheduledJob[]> {
+  return request("/api/jobs", { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export function createJob(token: string, job: ScheduledJob): Promise<ScheduledJob> {
+  return request("/api/jobs", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(job),
+  });
+}
+
+export function updateJob(token: string, job: ScheduledJob): Promise<{ ok: boolean }> {
+  return request(`/api/jobs/${job.id}`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(job),
+  });
+}
+
+export function updateJobLayout(token: string, id: string, layout: CardLayout): Promise<{ ok: boolean }> {
+  return request(`/api/jobs/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ layout }),
+  });
+}
+
+export function deleteJob(token: string, id: string): Promise<{ ok: boolean }> {
+  return request(`/api/jobs/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+}
+
+export function runJobNow(token: string, id: string): Promise<JobRun> {
+  return request(`/api/jobs/${id}/run`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+}
+
+export function listJobRuns(token: string, id: string): Promise<JobRun[]> {
+  return request(`/api/jobs/${id}/runs`, { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export interface JobsTickInfo {
+  secret: string;
+  path: string;
+}
+
+export function getJobsTickInfo(token: string): Promise<JobsTickInfo> {
+  return request("/api/jobs/tick-info", { headers: { Authorization: `Bearer ${token}` } });
 }

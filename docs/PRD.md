@@ -64,9 +64,9 @@ One person: the developer running this for their own side projects, home lab, or
 - Inline cell editing that generates and runs an `UPDATE`, with a confirm step before committing.
 - Export visible results to CSV/JSON.
 
-### Query history & snippets
-- Automatic history of executed queries (per connection), searchable.
-- Manually save a query as a named snippet for reuse.
+### Query history & saved queries
+- Manually save a query (from any editor tab, saved or not) for reuse; rename or delete it later, from the tab itself.
+- **Not yet implemented:** automatic history of executed queries — still just manually-saved queries, no auto-logged run history yet.
 
 ### Settings
 - Theme (light/dark/system).
@@ -74,10 +74,12 @@ One person: the developer running this for their own side projects, home lab, or
 - Manage saved connections and snippets in one place.
 - Sign out.
 
-### Scheduled jobs / data orchestration (planned, not built)
-- A job = a saved SQL query, a connection to run it against, and a cron schedule.
-- Deployment target is Vercel, which has no persistent scheduler — jobs are triggered by an external service ([cron-job.org](https://cron-job.org)) hitting one shared, secret-gated endpoint on a fixed interval; dbeans itself decides what's due each tick and runs it. The user configures **one** external cron entry total, not one per job — see ARCHITECTURE.md §6.
-- v1 of this feature ships with job runs **stubbed** (logged, not actually executed) since real query execution against target databases doesn't exist yet — see the SQL editor/results grid notes above.
+### Scheduled queries / data orchestration
+- A job = a saved SQL query, a connection to run it against, and a cron schedule, with optional dependencies on other jobs, a retry policy, and a post-run check against the query's own result (fail if it returns/doesn't return rows) — a simple orchestrator, not just a cron trigger.
+- Deployment target is Vercel, which has no persistent scheduler — jobs are triggered by an external service ([cron-job.org](https://cron-job.org)) hitting one shared, secret-gated endpoint (`GET /api/jobs/tick`) on a fixed interval (15 minutes minimum in practice); dbeans itself decides what's due each tick and runs it. The user configures **one** external cron entry total, not one per job — see ARCHITECTURE.md §6. The exact tick URL (with secret) is shown in Settings.
+- Job SQL supports `{{date}}` / `{{date-1}}` / `{{date+N}}` / `{{datetime}}` placeholders, substituted (UTC) right before each run.
+- Own canvas UI (`/jobs`), mirroring the connections board — a card per job, create/edit/run-now/pause/delete from there.
+- **Built and executing for real** against Postgres connections (not stubbed) — MySQL/SQLite connections can be attached to a job but fail at run time until those drivers are wired up (see ARCHITECTURE.md §2).
 
 ## 6. Explicitly deferred (possible future phases)
 

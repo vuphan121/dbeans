@@ -1,0 +1,114 @@
+import { useMemo } from "react";
+import { Command } from "cmdk";
+import * as Dialog from "@radix-ui/react-dialog";
+import { useNavigate } from "react-router-dom";
+import { Table2, FileCode2, Plus, SunMoon, ArrowLeftRight } from "lucide-react";
+import { OTHER_TABLES } from "@/mock/sqlFixtures";
+import { useSnippetsStore } from "@/state/snippets";
+import { useWorkbenchStore } from "@/state/workbench";
+import { useSettingsStore } from "@/state/settings";
+
+export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const navigate = useNavigate();
+  const { snippets } = useSnippetsStore();
+  const addTab = useWorkbenchStore((s) => s.addTab);
+  const { theme, setTheme } = useSettingsStore();
+
+  const tables = useMemo(() => ["users", ...OTHER_TABLES], []);
+
+  function run(fn: () => void) {
+    fn();
+    onOpenChange(false);
+  }
+
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60" />
+        <Dialog.Content
+          aria-describedby={undefined}
+          className="fixed left-1/2 top-[120px] z-50 w-[620px] -translate-x-1/2 overflow-hidden rounded-xl border border-border-elevated bg-bg-raised shadow-2xl"
+        >
+          <Dialog.Title className="sr-only">Command palette</Dialog.Title>
+          <Command loop shouldFilter>
+            <div className="flex h-[50px] items-center gap-2.5 border-b border-border-strong px-4">
+              <span className="text-[13px] text-text-faint">⌕</span>
+              <Command.Input
+                autoFocus
+                placeholder="Search tables, snippets, actions…"
+                className="flex-1 bg-transparent text-[14px] text-text-primary placeholder:text-text-faint outline-none"
+              />
+              <span className="rounded-[4px] border border-border-control px-1.5 py-0.5 font-mono text-[10.5px] text-text-faint">
+                esc
+              </span>
+            </div>
+            <Command.List className="max-h-[420px] overflow-y-auto py-2">
+              <Command.Empty className="px-4 py-6 text-center text-[12.5px] text-text-faint">
+                No results
+              </Command.Empty>
+
+              <Command.Group heading="Tables" className="[&_[cmdk-group-heading]]:px-4 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:pt-1.5 [&_[cmdk-group-heading]]:text-[10.5px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-text-quiet">
+                {tables.map((t) => (
+                  <Command.Item
+                    key={t}
+                    onSelect={() => run(() => navigate("/workbench"))}
+                    className="flex h-[34px] cursor-pointer items-center gap-2.5 px-4 text-[12.5px] text-text-primary data-[selected=true]:bg-bg-selected"
+                  >
+                    <Table2 size={13} className="text-text-muted" />
+                    <span className="font-mono">{t}</span>
+                    <span className="text-[11px] text-text-faint">public</span>
+                  </Command.Item>
+                ))}
+              </Command.Group>
+
+              <Command.Group heading="Snippets" className="[&_[cmdk-group-heading]]:px-4 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:pt-1.5 [&_[cmdk-group-heading]]:text-[10.5px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-text-quiet">
+                {snippets.map((s) => (
+                  <Command.Item
+                    key={s.id}
+                    onSelect={() => run(() => navigate("/workbench"))}
+                    className="flex h-[34px] cursor-pointer items-center gap-2.5 px-4 text-[12.5px] text-text-primary data-[selected=true]:bg-bg-selected"
+                  >
+                    <FileCode2 size={13} className="text-text-muted" />
+                    <span>{s.name}</span>
+                    <span className="ml-auto text-[10.5px] text-text-faint">{s.used}</span>
+                  </Command.Item>
+                ))}
+              </Command.Group>
+
+              <Command.Group heading="Actions" className="[&_[cmdk-group-heading]]:px-4 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:pt-1.5 [&_[cmdk-group-heading]]:text-[10.5px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-text-quiet">
+                <Command.Item
+                  onSelect={() => run(() => { navigate("/workbench"); addTab(); })}
+                  className="flex h-[34px] cursor-pointer items-center gap-2.5 px-4 text-[12.5px] text-text-primary data-[selected=true]:bg-bg-selected"
+                >
+                  <Plus size={13} className="text-text-muted" />
+                  New query tab
+                  <span className="ml-auto font-mono text-[10.5px] text-text-faint">⌘T</span>
+                </Command.Item>
+                <Command.Item
+                  onSelect={() => run(() => setTheme(theme === "dark" ? "light" : "dark"))}
+                  className="flex h-[34px] cursor-pointer items-center gap-2.5 px-4 text-[12.5px] text-text-primary data-[selected=true]:bg-bg-selected"
+                >
+                  <SunMoon size={13} className="text-text-muted" />
+                  Switch theme
+                  <span className="ml-auto font-mono text-[10.5px] text-text-faint">⌘⇧L</span>
+                </Command.Item>
+                <Command.Item
+                  onSelect={() => run(() => navigate("/connections"))}
+                  className="flex h-[34px] cursor-pointer items-center gap-2.5 px-4 text-[12.5px] text-text-primary data-[selected=true]:bg-bg-selected"
+                >
+                  <ArrowLeftRight size={13} className="text-text-muted" />
+                  Switch connection…
+                </Command.Item>
+              </Command.Group>
+            </Command.List>
+            <div className="flex h-8 items-center gap-3.5 border-t border-border-strong bg-bg-app px-4 font-mono text-[10.5px] text-text-quiet">
+              <span>↑↓ move</span>
+              <span>⏎ open</span>
+              <span>⌘⏎ open in new tab</span>
+            </div>
+          </Command>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}

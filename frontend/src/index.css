@@ -1,0 +1,143 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------- *
+ * Design tokens, transcribed from the Claude Design handoff
+ * (dbeans UI.dc.html). Dark is the default/primary theme; light overrides
+ * live under [data-theme="light"]. Every color here is neutral/monochrome
+ * except --color-accent / --color-accent-bg / --color-accent-border,
+ * which are used ONLY by the logo mark.
+ * ---------------------------------------------------------------------- */
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  /* surfaces */
+  --color-bg-app: #09090b;
+  --color-bg-surface: #0b0b0d;
+  --color-bg-editor: #0d0d0f;
+  --color-bg-inset: #0f0f12;
+  --color-bg-raised: #141417;
+  --color-bg-hover: #18181b;
+  --color-bg-active: #1e1e23;
+  --color-bg-selected: #1c1c20;
+
+  /* borders */
+  --color-border-faint: #161619;
+  --color-border-subtle: #1a1a1d;
+  --color-border-default: #1f1f23;
+  --color-border-strong: #232326;
+  --color-border-input: #26262b;
+  --color-border-control: #2a2a2f;
+  --color-border-elevated: #2e2e34;
+  --color-border-focus: #3a3a42;
+
+  /* text */
+  --color-text-primary: #ededef;
+  --color-text-onbright: #ffffff;
+  --color-text-secondary: #c9c9d0;
+  --color-text-tertiary: #a1a1a8;
+  --color-text-muted: #8b8b93;
+  --color-text-faint: #6e6e76;
+  --color-text-quiet: #5c5c64;
+  --color-text-ghost: #4a4a52;
+  --color-text-disabled: #3a3a42;
+
+  /* brand accent — logo mark only */
+  --color-accent: #8fe3a8;
+  --color-accent-bg: #13251a;
+  --color-accent-border: #1e3a28;
+
+  /* semantic: success */
+  --color-success-text: #a9d9b8;
+  --color-success-dim: #4a8a5c;
+  --color-success-bg: #0e1710;
+  --color-success-border: #1f3b26;
+  --color-success-dot: #2e6b3f;
+
+  /* semantic: error */
+  --color-error-text: #e0a8a8;
+  --color-error-dim: #d46a6a;
+  --color-error-bg: #170e0e;
+  --color-error-border: #4a2323;
+  --color-error-dot: #7f2c2c;
+
+  /* inverse (buttons on light-colored fill, e.g. primary CTA) */
+  --color-inverse-bg: #ededef;
+  --color-inverse-text: #09090b;
+}
+
+[data-theme="light"] {
+  --color-bg-app: #ffffff;
+  --color-bg-surface: #f7f7f8;
+  --color-bg-editor: #ffffff;
+  --color-bg-inset: #fafafa;
+  --color-bg-raised: #ffffff;
+  --color-bg-hover: #f2f2f3;
+  --color-bg-active: #efeff1;
+  --color-bg-selected: #f2f2f3;
+
+  --color-border-faint: #f0f0f1;
+  --color-border-subtle: #e7e7ea;
+  --color-border-default: #ededee;
+  --color-border-strong: #e4e4e7;
+  --color-border-input: #e4e4e7;
+  --color-border-control: #d8d8dc;
+  --color-border-elevated: #d8d8dc;
+  --color-border-focus: #c9c9ce;
+
+  --color-text-primary: #18181b;
+  --color-text-onbright: #09090b;
+  --color-text-secondary: #3f3f46;
+  --color-text-tertiary: #5f5f68;
+  --color-text-muted: #71717a;
+  --color-text-faint: #9a9aa2;
+  --color-text-quiet: #9a9aa2;
+  --color-text-ghost: #b4b4bb;
+  --color-text-disabled: #c9c9ce;
+
+  --color-accent: #4fae70;
+  --color-accent-bg: #eaf6ee;
+  --color-accent-border: #cfe8d8;
+
+  --color-success-text: #1f6b3a;
+  --color-success-dim: #3f8a54;
+  --color-success-bg: #eaf6ee;
+  --color-success-border: #cfe8d8;
+  --color-success-dot: #3f8a54;
+
+  --color-error-text: #a03e3e;
+  --color-error-dim: #c25c5c;
+  --color-error-bg: #fdf1f1;
+  --color-error-border: #f0d4d4;
+  --color-error-dot: #c25c5c;
+
+  --color-inverse-bg: #18181b;
+  --color-inverse-text: #fafafa;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg-app);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  height: 100%;
+}
+
+::selection {
+  background: var(--color-bg-active);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-control) transparent;
+}

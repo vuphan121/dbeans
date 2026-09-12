@@ -1,0 +1,30 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/node_modules/
+npm-debug.log*
+
+# Go / backend
+backend/dbeans-server
+backend/*.exe
+backend/tmp/
+backend/*.log
+
+# Agent / design-tool artifacts (kept out of this repo; pushed separately)
+.claude/
+_design_handoff/
+*.dc.html
+dbeans UI System-handoff.zip
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

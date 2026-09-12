@@ -7,11 +7,12 @@ import { OTHER_TABLES } from "@/mock/sqlFixtures";
 import { useSnippetsStore } from "@/state/snippets";
 import { useWorkbenchStore } from "@/state/workbench";
 import { useSettingsStore } from "@/state/settings";
+import { comboLabel, isMac } from "@/lib/platform";
 
 export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const navigate = useNavigate();
   const { snippets } = useSnippetsStore();
-  const addTab = useWorkbenchStore((s) => s.addTab);
+  const { addTab, openTable, openSnippet } = useWorkbenchStore();
   const { theme, setTheme } = useSettingsStore();
 
   const tables = useMemo(() => ["users", ...OTHER_TABLES], []);
@@ -51,7 +52,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                 {tables.map((t) => (
                   <Command.Item
                     key={t}
-                    onSelect={() => run(() => navigate("/workbench"))}
+                    onSelect={() => run(() => { navigate("/workbench"); openTable(t); })}
                     className="flex h-[34px] cursor-pointer items-center gap-2.5 px-4 text-[12.5px] text-text-primary data-[selected=true]:bg-bg-selected"
                   >
                     <Table2 size={13} className="text-text-muted" />
@@ -65,7 +66,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                 {snippets.map((s) => (
                   <Command.Item
                     key={s.id}
-                    onSelect={() => run(() => navigate("/workbench"))}
+                    onSelect={() => run(() => { navigate("/workbench"); openSnippet(s.name, s.sql); })}
                     className="flex h-[34px] cursor-pointer items-center gap-2.5 px-4 text-[12.5px] text-text-primary data-[selected=true]:bg-bg-selected"
                   >
                     <FileCode2 size={13} className="text-text-muted" />
@@ -82,7 +83,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                 >
                   <Plus size={13} className="text-text-muted" />
                   New query tab
-                  <span className="ml-auto font-mono text-[10.5px] text-text-faint">⌘T</span>
+                  <span className="ml-auto font-mono text-[10.5px] text-text-faint">T</span>
                 </Command.Item>
                 <Command.Item
                   onSelect={() => run(() => setTheme(theme === "dark" ? "light" : "dark"))}
@@ -90,7 +91,9 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                 >
                   <SunMoon size={13} className="text-text-muted" />
                   Switch theme
-                  <span className="ml-auto font-mono text-[10.5px] text-text-faint">⌘⇧L</span>
+                  <span className="ml-auto font-mono text-[10.5px] text-text-faint">
+                    {isMac ? "⌘⇧L" : "Ctrl+Shift+L"}
+                  </span>
                 </Command.Item>
                 <Command.Item
                   onSelect={() => run(() => navigate("/connections"))}
@@ -104,7 +107,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
             <div className="flex h-8 items-center gap-3.5 border-t border-border-strong bg-bg-app px-4 font-mono text-[10.5px] text-text-quiet">
               <span>↑↓ move</span>
               <span>⏎ open</span>
-              <span>⌘⏎ open in new tab</span>
+              <span>{comboLabel("⏎")} open in new tab</span>
             </div>
           </Command>
         </Dialog.Content>

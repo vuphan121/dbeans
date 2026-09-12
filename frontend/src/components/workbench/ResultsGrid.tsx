@@ -1,10 +1,14 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { UserRow } from "@/mock/sqlFixtures";
 import { Button } from "@/components/ui/Button";
+import { Select } from "@/components/ui/Select";
 import { cn } from "@/lib/utils";
+import { comboLabel } from "@/lib/platform";
 
 const COLUMNS = "52px 240px 110px 96px 170px 120px 1fr";
+const PAGE_SIZE_OPTIONS = [50, 100, 500, 1000];
 
 interface PendingEdit {
   rowIndex: number;
@@ -17,10 +21,18 @@ export function ResultsGrid({ rows: initialRows }: { rows: UserRow[] }) {
   const [editing, setEditing] = useState<{ rowIndex: number; field: keyof UserRow } | null>(null);
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState<PendingEdit | null>(null);
+  const [pageSize, setPageSize] = useState(100);
+  const [page, setPage] = useState(0);
   const parentRef = useRef<HTMLDivElement>(null);
 
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const safePage = Math.min(page, totalPages - 1);
+  const pageStart = safePage * pageSize;
+  const pageRows = rows.slice(pageStart, pageStart + pageSize);
+  const pageEnd = pageStart + pageRows.length;
+
   const virtualizer = useVirtualizer({
-    count: rows.length,
+    count: pageRows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => 30,
     overscan: 10,
@@ -55,6 +67,10 @@ export function ResultsGrid({ rows: initialRows }: { rows: UserRow[] }) {
     setPending(null);
   }
 
+  function goToPage(next: number) {
+    setPage(Math.min(totalPages - 1, Math.max(0, next)));
+  }
+
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-bg-app">
       <div
@@ -73,8 +89,9 @@ export function ResultsGrid({ rows: initialRows }: { rows: UserRow[] }) {
       <div ref={parentRef} className="flex-1 overflow-y-auto">
         <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
           {virtualizer.getVirtualItems().map((vRow) => {
-            const row = rows[vRow.index];
-            const isEditedRow = pending?.rowIndex === vRow.index;
+            const globalIndex = pageStart + vRow.index;
+            const row = pageRows[vRow.index];
+            const isEditedRow = pending?.rowIndex === globalIndex;
             return (
               <div
                 key={vRow.key}
@@ -90,10 +107,10 @@ export function ResultsGrid({ rows: initialRows }: { rows: UserRow[] }) {
                 <div className="px-2.5 text-text-disabled">{row.n}</div>
                 <Cell>{row.email}</Cell>
                 <EditableCell
-                  editing={editing?.rowIndex === vRow.index && editing.field === "plan"}
+                  editing={editing?.rowIndex === globalIndex && editing.field === "plan"}
                   draft={draft}
                   onDraftChange={setDraft}
-                  onStart={() => startEdit(vRow.index, "plan")}
+                  onStart={() => startEdit(globalIndex, "plan")}
                   onCommit={commitEdit}
                 >
                   {row.plan}
@@ -101,10 +118,10 @@ export function ResultsGrid({ rows: initialRows }: { rows: UserRow[] }) {
                 <Cell align="right">{row.mrr}</Cell>
                 <Cell muted>{row.created}</Cell>
                 <EditableCell
-                  editing={editing?.rowIndex === vRow.index && editing.field === "status"}
+                  editing={editing?.rowIndex === globalIndex && editing.field === "status"}
                   draft={draft}
                   onDraftChange={setDraft}
-                  onStart={() => startEdit(vRow.index, "status")}
+                  onStart={() => startEdit(globalIndex, "status")}
                   onCommit={commitEdit}
                   muted
                 >
@@ -129,11 +146,51 @@ export function ResultsGrid({ rows: initialRows }: { rows: UserRow[] }) {
               Discard
             </Button>
             <Button variant="primary" size="sm" onClick={savePending}>
-              Save <span className="font-mono opacity-55">⌘S</span>
+              Save <span className="font-mono opacity-55">{comboLabel("S")}</span>
             </Button>
           </div>
         </div>
       )}
+
+      <div className="flex h-9 shrink-0 items-center gap-3 border-t border-border-default bg-bg-inset px-3.5 text-[11.5px] text-text-faint">
+        <span>
+          Rows <span className="text-text-secondary">{rows.length === 0 ? 0 : pageStart + 1}–{pageEnd}</span> of{" "}
+          {rows.length}
+        </span>
+        <div className="ml-auto flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <span>Rows per page</span>
+            <Select
+              value={String(pageSize)}
+              onChange={(v) => {
+                setPageSize(Number(v));
+                setPage(0);
+              }}
+              options={PAGE_SIZE_OPTIONS.map((n) => ({ value: String(n), label: String(n) }))}
+              className="h-6 text-[11px]"
+            />
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => goToPage(safePage - 1)}
+              disabled={safePage === 0}
+              className="flex h-6 w-6 items-center justify-center rounded-[5px] text-text-muted hover:bg-bg-hover disabled:pointer-events-none disabled:opacity-30"
+            >
+              <ChevronLeft size={13} />
+            </button>
+            <span className="min-w-[64px] text-center text-text-secondary">
+              Page {safePage + 1} of {totalPages}
+            </span>
+            <button
+              onClick={() => goToPage(safePage + 1)}
+              disabled={safePage >= totalPages - 1}
+              className="flex h-6 w-6 items-center justify-center rounded-[5px] text-text-muted hover:bg-bg-hover disabled:pointer-events-none disabled:opacity-30"
+            >
+              <ChevronRight size={13} />
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

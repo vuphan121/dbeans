@@ -5,11 +5,13 @@ import { TabStrip } from "./TabStrip";
 import { SqlEditor } from "./SqlEditor";
 import { StatusBar } from "./StatusBar";
 import { ResultsGrid } from "./ResultsGrid";
+import { ResizeDivider } from "./ResizeDivider";
 import { Button } from "@/components/ui/Button";
 import { useWorkbenchStore } from "@/state/workbench";
 import { useSettingsStore } from "@/state/settings";
 import { useAuthStore } from "@/state/auth";
 import { trackEvent } from "@/lib/api";
+import { comboLabel } from "@/lib/platform";
 import { USER_ROWS } from "@/mock/sqlFixtures";
 import type { SavedConnection } from "@/lib/types";
 
@@ -26,6 +28,11 @@ export function SqlWorkbench({
   const resolvedTheme = theme === "system" ? (document.documentElement.getAttribute("data-theme") as "dark" | "light" | null) ?? "dark" : theme;
   const [lastRunMs, setLastRunMs] = useState(38);
   const [running, setRunning] = useState(false);
+  const [editorHeight, setEditorHeight] = useState(296);
+
+  function resizeEditor(deltaY: number) {
+    setEditorHeight((h) => Math.min(640, Math.max(140, h + deltaY)));
+  }
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
 
@@ -55,7 +62,7 @@ export function SqlWorkbench({
     >
       {activeTab?.kind === "sql" ? (
         <>
-          <div className="relative h-[296px] shrink-0 border-b border-border-faint">
+          <div className="relative shrink-0" style={{ height: editorHeight }}>
             <SqlEditor
               value={activeTab.sql ?? ""}
               onChange={(v) => updateTabSql(activeTab.id, v)}
@@ -68,10 +75,11 @@ export function SqlWorkbench({
                 Format
               </Button>
               <Button variant="primary" size="sm" onClick={runQuery} className="pointer-events-auto">
-                {running ? "Running…" : "Run"} <span className="font-mono opacity-55">⌘⏎</span>
+                {running ? "Running…" : "Run"} <span className="font-mono opacity-55">{comboLabel("⏎")}</span>
               </Button>
             </div>
           </div>
+          <ResizeDivider onDrag={resizeEditor} />
           <StatusBar rows={USER_ROWS.length} ms={lastRunMs} connectionName={connection.name} schema="public" />
           <ResultsGrid rows={USER_ROWS} />
         </>

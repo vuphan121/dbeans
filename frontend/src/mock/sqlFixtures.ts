@@ -60,11 +60,104 @@ export const OTHER_TABLES = [
   "workspaces",
 ];
 
+export const TABLE_COLUMNS: Record<string, { name: string; type: string }[]> = {
+  accounts: [
+    { name: "id", type: "uuid" },
+    { name: "name", type: "text" },
+    { name: "owner_id", type: "uuid" },
+    { name: "created_at", type: "timestamptz" },
+  ],
+  events: [
+    { name: "id", type: "uuid" },
+    { name: "account_id", type: "uuid" },
+    { name: "type", type: "text" },
+    { name: "payload", type: "jsonb" },
+    { name: "created_at", type: "timestamptz" },
+  ],
+  invoices: [
+    { name: "id", type: "uuid" },
+    { name: "account_id", type: "uuid" },
+    { name: "amount", type: "numeric" },
+    { name: "status", type: "text" },
+    { name: "issued_at", type: "timestamptz" },
+  ],
+  plan_changes: [
+    { name: "id", type: "uuid" },
+    { name: "user_id", type: "uuid" },
+    { name: "from_plan_id", type: "uuid" },
+    { name: "to_plan_id", type: "uuid" },
+    { name: "changed_at", type: "timestamptz" },
+  ],
+  plans: [
+    { name: "id", type: "uuid" },
+    { name: "name", type: "text" },
+    { name: "tier", type: "text" },
+    { name: "monthly_price", type: "numeric" },
+  ],
+  sessions: [
+    { name: "id", type: "uuid" },
+    { name: "user_id", type: "uuid" },
+    { name: "ip", type: "inet" },
+    { name: "created_at", type: "timestamptz" },
+  ],
+  workspaces: [
+    { name: "id", type: "uuid" },
+    { name: "account_id", type: "uuid" },
+    { name: "name", type: "text" },
+    { name: "created_at", type: "timestamptz" },
+  ],
+};
+
+export const VIEWS = ["active_subscriptions", "mrr_by_month", "churned_users", "plan_upgrade_funnel"];
+
 export const SNIPPETS = [
-  { id: "s1", name: "Churn by plan", sql: "select p.name, date_trunc('month', u.canceled_at) …", used: "2 h ago" },
-  { id: "s2", name: "MRR by plan tier", sql: "select plan_tier, sum(mrr) from public.users group by 1 …", used: "yesterday" },
-  { id: "s3", name: "Slow queries", sql: "select query, mean_exec_time from pg_stat_statements …", used: "5 days ago" },
-  { id: "s4", name: "Table sizes", sql: "select relname, pg_size_pretty(pg_total_relation_size(c.oid)) …", used: "2 weeks ago" },
+  {
+    id: "s1",
+    name: "Churn by plan",
+    sql: `select  p.name as plan,
+        date_trunc('month', u.canceled_at) as month,
+        count(distinct u.id) as churned
+from    public.users u
+join    public.plans p on p.id = u.plan_id
+where   u.canceled_at >= now() - interval '6 months'
+group by 1, 2
+order by 2 desc, 3 desc;`,
+    used: "2 h ago",
+  },
+  {
+    id: "s2",
+    name: "MRR by plan tier",
+    sql: `select  p.tier,
+        sum(u.mrr) as total_mrr
+from    public.users u
+join    public.plans p on p.id = u.plan_id
+where   u.status = 'active'
+group by 1
+order by 2 desc;`,
+    used: "yesterday",
+  },
+  {
+    id: "s3",
+    name: "Slow queries",
+    sql: `select  query,
+        mean_exec_time,
+        calls
+from    pg_stat_statements
+order by mean_exec_time desc
+limit   20;`,
+    used: "5 days ago",
+  },
+  {
+    id: "s4",
+    name: "Table sizes",
+    sql: `select  relname,
+        pg_size_pretty(pg_total_relation_size(c.oid)) as size
+from    pg_class c
+join    pg_namespace n on n.oid = c.relnamespace
+where   n.nspname = 'public'
+order by pg_total_relation_size(c.oid) desc;`,
+    used: "2 weeks ago",
+  },
 ];
 
 export const DEFAULT_QUERY = `-- monthly churn by plan, last 6 months

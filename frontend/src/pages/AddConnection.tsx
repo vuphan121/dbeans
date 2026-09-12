@@ -7,6 +7,8 @@ import { Switch } from "@/components/ui/Switch";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { ENGINES, type Engine, type ConnectionFields } from "@/lib/types";
 import { useConnectionsStore } from "@/state/connections";
+import { EngineIcon } from "@/components/EngineIcon";
+import { buildConnectionString, parseConnectionString, supportsConnectionString } from "@/lib/connectionString";
 
 type TestState = "idle" | "testing" | "pass" | "fail";
 
@@ -21,12 +23,13 @@ export default function AddConnection() {
   const [name, setName] = useState("");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [testState, setTestState] = useState<TestState>("idle");
+  const [connectionString, setConnectionString] = useState("");
 
   // SQL fields
-  const [host, setHost] = useState("db.internal.acme.dev");
+  const [host, setHost] = useState("");
   const [port, setPort] = useState(String(ENGINES.postgres.defaultPort));
-  const [database, setDatabase] = useState("acme_production");
-  const [user, setUser] = useState("app_readwrite");
+  const [database, setDatabase] = useState("");
+  const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [sslMode, setSslMode] = useState<"disable" | "prefer" | "require" | "verify-ca">("require");
@@ -39,7 +42,7 @@ export default function AddConnection() {
   const [redisTls, setRedisTls] = useState(true);
 
   // Kafka fields
-  const [brokers, setBrokers] = useState("localhost:9092");
+  const [brokers, setBrokers] = useState("");
   const [saslUsername, setSaslUsername] = useState("");
   const [saslPassword, setSaslPassword] = useState("");
   const [kafkaTls, setKafkaTls] = useState(true);
@@ -47,20 +50,103 @@ export default function AddConnection() {
   function selectEngine(e: Engine) {
     setEngine(e);
     setTestState("idle");
+    setConnectionString("");
     if (e !== "sqlite" && "defaultPort" in ENGINES[e]) {
       setPort(String(ENGINES[e].defaultPort ?? ""));
+    }
+  }
+
+  // Two-way sync between the individual fields and the single connection
+  // string: editing a field rebuilds the string, editing the string
+  // reparses it back into the fields.
+  function syncString(overrides: {
+    host?: string;
+    port?: string;
+    database?: string;
+    user?: string;
+    password?: string;
+    sslMode?: typeof sslMode;
+    redisDbIndex?: string;
+  } = {}) {
+    if (!supportsConnectionString(engine)) return;
+    const h = overrides.host ?? host;
+    const p = overrides.port ?? port;
+    if (engine === "redis") {
+      setConnectionString(
+        buildConnectionString("redis", {
+          host: h,
+          port: Number(p) || undefined,
+          password: overrides.password ?? password,
+          dbIndex: Number(overrides.redisDbIndex ?? redisDbIndex) || 0,
+        }),
+      );
+      return;
+    }
+    setConnectionString(
+      buildConnectionString(engine, {
+        host: h,
+        port: Number(p) || undefined,
+        database: overrides.database ?? database,
+        user: overrides.user ?? user,
+        password: overrides.password ?? password,
+        sslMode: overrides.sslMode ?? sslMode,
+      }),
+    );
+  }
+
+  function onHostChange(v: string) {
+    setHost(v);
+    syncString({ host: v });
+  }
+  function onPortChange(v: string) {
+    setPort(v);
+    syncString({ port: v });
+  }
+  function onDatabaseChange(v: string) {
+    setDatabase(v);
+    syncString({ database: v });
+  }
+  function onUserChange(v: string) {
+    setUser(v);
+    syncString({ user: v });
+  }
+  function onPasswordChange(v: string) {
+    setPassword(v);
+    syncString({ password: v });
+  }
+  function onSslModeChange(v: typeof sslMode) {
+    setSslMode(v);
+    syncString({ sslMode: v });
+  }
+  function onRedisDbIndexChange(v: string) {
+    setRedisDbIndex(v);
+    syncString({ redisDbIndex: v });
+  }
+
+  function onConnectionStringChange(v: string) {
+    setConnectionString(v);
+    const parsed = parseConnectionString(engine, v);
+    if (!parsed) return;
+    if (parsed.host !== undefined) setHost(parsed.host);
+    if (parsed.port !== undefined) setPort(String(parsed.port));
+    if (engine === "redis") {
+      if (parsed.password !== undefined) setPassword(parsed.password);
+      if (parsed.dbIndex !== undefined) setRedisDbIndex(String(parsed.dbIndex));
+    } else {
+      if (parsed.database !== undefined) setDatabase(parsed.database);
+      if (parsed.user !== undefined) setUser(parsed.user);
+      if (parsed.password !== undefined) setPassword(parsed.password);
+      if (parsed.sslMode !== undefined) setSslMode(parsed.sslMode);
     }
   }
 
   function runTest() {
     setTestState("testing");
     window.setTimeout(() => {
-      // Believable demo behavior: local/known-good hosts pass, anything else
-      // fails with a plausible network error — there's no real backend yet.
-      const looksReachable = /localhost|127\.0\.0\.1|internal|acme/.test(
-        engine === "kafka" ? brokers : host,
-      );
-      setTestState(looksReachable ? "pass" : "fail");
+      // Believable demo behavior: a host/broker was actually entered, so we
+      // "succeed" — there's no real backend to test against yet.
+      const target = engine === "kafka" ? brokers : host;
+      setTestState(target.trim() ? "pass" : "fail");
     }, 900);
   }
 
@@ -109,14 +195,7 @@ export default function AddConnection() {
   return (
     <div className="flex h-full items-center justify-center bg-bg-app p-8">
       <div className="flex w-[620px] max-h-full flex-col gap-5 overflow-y-auto rounded-xl border border-border-strong bg-bg-app p-8">
-        <div className="flex flex-col gap-1">
-          <div className="text-[16px] font-semibold tracking-[-0.01em] text-text-primary">
-            New connection
-          </div>
-          <div className="text-[12px] text-text-faint">
-            Credentials are encrypted with your master password.
-          </div>
-        </div>
+        <div className="text-[16px] font-semibold tracking-[-0.01em] text-text-primary">New connection</div>
 
         <div className="flex flex-col gap-2">
           <div className="text-[12px] font-medium text-text-tertiary">Engine</div>
@@ -131,11 +210,11 @@ export default function AddConnection() {
                 }`}
               >
                 <div
-                  className={`flex h-[22px] w-[22px] items-center justify-center rounded-[6px] font-mono text-[10px] font-semibold ${
+                  className={`flex h-[26px] w-[26px] items-center justify-center rounded-[6px] ${
                     engine === e ? "bg-bg-active text-text-primary" : "bg-bg-hover text-text-muted"
                   }`}
                 >
-                  {ENGINES[e].tag}
+                  <EngineIcon engine={e} size={16} />
                 </div>
                 <div className={`text-[12px] font-medium ${engine === e ? "text-text-primary" : "text-text-muted"}`}>
                   {ENGINES[e].label}
@@ -146,23 +225,38 @@ export default function AddConnection() {
         </div>
 
         <div className="flex flex-col gap-3.5">
+          {supportsConnectionString(engine) && (
+            <Field label="Connection string">
+              <Input
+                mono
+                value={connectionString}
+                onChange={(e) => onConnectionStringChange(e.target.value)}
+                placeholder={
+                  engine === "redis"
+                    ? "redis://:password@host:6379/0"
+                    : `${engine === "mysql" ? "mysql" : "postgresql"}://user:password@host:5432/database`
+                }
+              />
+            </Field>
+          )}
+
           <Field label="Name">
-            <Input mono value={name} onChange={(e) => setName(e.target.value)} placeholder={buildDsn()} />
+            <Input mono value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. my-app · production" />
           </Field>
 
           {isSql && (
             <>
               <div className="grid grid-cols-[1fr_110px] gap-2.5">
                 <Field label="Host">
-                  <Input mono value={host} onChange={(e) => setHost(e.target.value)} />
+                  <Input mono value={host} onChange={(e) => onHostChange(e.target.value)} placeholder="db.example.com" />
                 </Field>
                 <Field label="Port">
-                  <Input mono value={port} onChange={(e) => setPort(e.target.value)} />
+                  <Input mono value={port} onChange={(e) => onPortChange(e.target.value)} />
                 </Field>
               </div>
               {engine !== "sqlite" ? (
                 <Field label="Database">
-                  <Input mono value={database} onChange={(e) => setDatabase(e.target.value)} />
+                  <Input mono value={database} onChange={(e) => onDatabaseChange(e.target.value)} placeholder="my_app_production" />
                 </Field>
               ) : (
                 <Field label="File path">
@@ -172,14 +266,14 @@ export default function AddConnection() {
               {engine !== "sqlite" && (
                 <div className="grid grid-cols-2 gap-2.5">
                   <Field label="User">
-                    <Input mono value={user} onChange={(e) => setUser(e.target.value)} />
+                    <Input mono value={user} onChange={(e) => onUserChange(e.target.value)} placeholder="app_user" />
                   </Field>
                   <Field label="Password">
                     <div className="flex h-[34px] items-center justify-between rounded-[7px] border border-border-input bg-bg-inset px-[11px]">
                       <input
                         type={showPassword ? "text" : "password"}
                         value={password}
-                        onChange={(e) => setPassword(e.target.value)}
+                        onChange={(e) => onPasswordChange(e.target.value)}
                         className="w-full bg-transparent font-mono text-[12.5px] tracking-[0.14em] text-text-primary outline-none"
                       />
                       <button
@@ -200,10 +294,10 @@ export default function AddConnection() {
             <>
               <div className="grid grid-cols-[1fr_110px] gap-2.5">
                 <Field label="Host">
-                  <Input mono value={host} onChange={(e) => setHost(e.target.value)} />
+                  <Input mono value={host} onChange={(e) => onHostChange(e.target.value)} placeholder="cache.example.com" />
                 </Field>
                 <Field label="Port">
-                  <Input mono value={port} onChange={(e) => setPort(e.target.value)} />
+                  <Input mono value={port} onChange={(e) => onPortChange(e.target.value)} />
                 </Field>
               </div>
               <div className="grid grid-cols-2 gap-2.5">
@@ -212,11 +306,11 @@ export default function AddConnection() {
                     mono
                     type="password"
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => onPasswordChange(e.target.value)}
                   />
                 </Field>
                 <Field label="DB index">
-                  <Input mono value={redisDbIndex} onChange={(e) => setRedisDbIndex(e.target.value)} />
+                  <Input mono value={redisDbIndex} onChange={(e) => onRedisDbIndexChange(e.target.value)} />
                 </Field>
               </div>
               <ToggleRow
@@ -283,7 +377,7 @@ export default function AddConnection() {
                   <div className="text-[12px] font-medium text-text-tertiary">SSL mode</div>
                   <SegmentedControl
                     value={sslMode}
-                    onChange={setSslMode}
+                    onChange={onSslModeChange}
                     options={[
                       { value: "disable", label: "disable" },
                       { value: "prefer", label: "prefer" },

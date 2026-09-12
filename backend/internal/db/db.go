@@ -43,9 +43,22 @@ CREATE TABLE IF NOT EXISTS analytics_events (
 	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS connections (
+	id TEXT PRIMARY KEY,
+	user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	engine TEXT NOT NULL,
+	dsn TEXT NOT NULL,
+	fields JSONB NOT NULL,
+	layout JSONB NOT NULL,
+	last_used TEXT NOT NULL DEFAULT 'just now',
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_analytics_events_user_id ON analytics_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_analytics_events_created_at ON analytics_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_connections_user_id ON connections(user_id);
 `
 
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {

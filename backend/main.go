@@ -65,7 +65,7 @@ func main() {
 	r.Use(middleware.Timeout(15 * time.Second))
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   allowedOrigins,
-		AllowedMethods:   []string{"GET", "POST", "OPTIONS"},
+		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Content-Type", "Authorization"},
 		AllowCredentials: true,
 		MaxAge:           300,
@@ -76,6 +76,11 @@ func main() {
 	r.Post("/api/auth/logout", s.Logout)
 	r.Get("/api/auth/me", s.Me)
 	r.Post("/api/analytics/event", s.TrackEvent)
+
+	r.Get("/api/connections", s.ListConnections)
+	r.Post("/api/connections", s.CreateConnection)
+	r.Patch("/api/connections/{id}", s.UpdateConnection)
+	r.Delete("/api/connections/{id}", s.DeleteConnection)
 
 	log.Printf("dbeans backend listening on :%s", port)
 	if err := http.ListenAndServe(":"+port, r); err != nil {

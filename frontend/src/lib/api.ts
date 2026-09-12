@@ -1,3 +1,5 @@
+import type { CardLayout, SavedConnection } from "@/lib/types";
+
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8080";
 
 export class ApiError extends Error {
@@ -47,5 +49,40 @@ export function trackEvent(token: string, type: string, payload?: unknown): void
     body: JSON.stringify({ type, payload }),
   }).catch(() => {
     /* best-effort */
+  });
+}
+
+export function listConnections(token: string): Promise<SavedConnection[]> {
+  return request("/api/connections", { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export function createConnection(token: string, conn: SavedConnection): Promise<SavedConnection> {
+  return request("/api/connections", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(conn),
+  });
+}
+
+export function updateConnectionLayout(token: string, id: string, layout: CardLayout): Promise<{ ok: boolean }> {
+  return request(`/api/connections/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ layout }),
+  });
+}
+
+export function touchConnection(token: string, id: string, lastUsed: string): Promise<{ ok: boolean }> {
+  return request(`/api/connections/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ lastUsed }),
+  });
+}
+
+export function deleteConnection(token: string, id: string): Promise<{ ok: boolean }> {
+  return request(`/api/connections/${id}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
   });
 }

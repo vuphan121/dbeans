@@ -1,159 +1,200 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Search, Settings as SettingsIcon, MoreHorizontal, Plus } from "lucide-react";
+import {
+  ReactFlow,
+  ReactFlowProvider,
+  Background,
+  BackgroundVariant,
+  Controls,
+  Panel,
+  applyNodeChanges,
+  type CoordinateExtent,
+  type Node,
+  type NodeChange,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import { Search, Settings as SettingsIcon, Plus } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/Button";
-import { EngineTag } from "@/components/ui/Badge";
 import { IconButton } from "@/components/ui/IconButton";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/DropdownMenu";
-import { ENGINES } from "@/lib/types";
 import { useConnectionsStore } from "@/state/connections";
+import { useUiStore } from "@/state/ui";
+import { requestOpenConnection } from "@/lib/openConnection";
+import { comboLabel, isModPressed, isTypingTarget } from "@/lib/platform";
+import { ThemeToggle } from "@/components/ThemeToggle";
+import { ConnectionCard } from "@/components/connections/ConnectionCard";
+
+const nodeTypes = { connectionCard: ConnectionCard };
+
+// Keeps the board from panning off into empty infinity in any direction —
+// generous enough for dozens of cards, bounded enough that you can't get lost.
+const CANVAS_BOUNDS: CoordinateExtent = [
+  [-400, -400],
+  [3200, 2600],
+];
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 1.5;
+
+function buildNode(connectionId: string, layout: { x: number; y: number; width: number; height: number }): Node {
+  return {
+    id: connectionId,
+    type: "connectionCard",
+    position: { x: layout.x, y: layout.y },
+    width: layout.width,
+    height: layout.height,
+    data: { connectionId },
+  };
+}
 
 export default function Connections() {
   const navigate = useNavigate();
-  const { connections, setActiveConnection, removeConnection } = useConnectionsStore();
+  const connections = useConnectionsStore((s) => s.connections);
+  const updateLayout = useConnectionsStore((s) => s.updateLayout);
+  const setActiveConnection = useConnectionsStore((s) => s.setActiveConnection);
   const [query, setQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const filtered = useMemo(() => {
+  function focusSearch() {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  }
+
+  // Defensive reset: if a previous "open" got interrupted (e.g. browser
+  // back-navigation mid-transition), don't leave the board stuck refusing
+  // clicks because openingConnectionId is still set from last time.
+  useEffect(() => {
+    useUiStore.getState().setOpeningConnectionId(null);
+  }, []);
+  const [nodes, setNodes] = useState<Node[]>(() =>
+    connections.map((c) => buildNode(c.id, c.layout)),
+  );
+
+  // Resync when connections are added/removed, without clobbering the live
+  // (possibly mid-drag) position/size of nodes that already exist.
+  useEffect(() => {
+    setNodes((prev) => {
+      const byId = new Map(prev.map((n) => [n.id, n]));
+      return connections.map((c) => byId.get(c.id) ?? buildNode(c.id, c.layout));
+    });
+  }, [connections]);
+
+  const matchesQuery = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return connections;
-    return connections.filter(
-      (c) => c.name.toLowerCase().includes(q) || c.dsn.toLowerCase().includes(q),
+    if (!q) return null;
+    return new Set(
+      connections.filter((c) => c.name.toLowerCase().includes(q) || c.dsn.toLowerCase().includes(q)).map((c) => c.id),
     );
   }, [connections, query]);
 
-  function openConnection(id: string) {
-    setActiveConnection(id);
-    navigate("/workbench");
-  }
+  const visibleNodes = useMemo(
+    () => (matchesQuery ? nodes.filter((n) => matchesQuery.has(n.id)) : nodes),
+    [nodes, matchesQuery],
+  );
+
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    setNodes((nds) => applyNodeChanges(changes, nds));
+  }, []);
+
+  const onNodeDragStop = useCallback(
+    (_: unknown, node: Node) => {
+      updateLayout(node.id, {
+        x: node.position.x,
+        y: node.position.y,
+        width: node.width ?? 280,
+        height: node.height ?? 148,
+      });
+    },
+    [updateLayout],
+  );
+
+  // React Flow's own click detection (vs. drag) is far more reliable here
+  // than a native dblclick on the card — that one could silently swallow
+  // the second click if there was any pointer movement between the two.
+  const onNodeClick = useCallback(
+    (_: unknown, node: Node) => {
+      requestOpenConnection(node.id, navigate, setActiveConnection);
+    },
+    [navigate, setActiveConnection],
+  );
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      // Bare "N", not Ctrl/Cmd+N — that combo is reserved by every browser
+      // for "new window" and can't be intercepted from the page.
+      if (e.key.toLowerCase() === "n" && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingTarget(e.target)) {
+        e.preventDefault();
+        navigate("/connections/new");
+        return;
+      }
+      // Ctrl/Cmd+K jumps into search here — has to preventDefault or Chrome
+      // hijacks it to focus the address bar for a web search instead.
+      if (isModPressed(e) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        focusSearch();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [navigate]);
 
   return (
     <div className="flex h-full flex-col bg-bg-app">
-      <header className="flex h-12 items-center justify-between border-b border-border-subtle px-4">
-        <Logo size={20} />
+      <header className="flex h-12 shrink-0 items-center justify-between border-b border-border-subtle px-4">
+        <Logo size={20} onClick={() => navigate("/connections")} />
         <div className="flex items-center gap-2">
-          <div className="rounded-[5px] border border-border-strong px-[7px] py-1 font-mono text-[11px] font-medium text-text-faint">
-            ⌘K
-          </div>
+          <button
+            onClick={focusSearch}
+            className="rounded-[5px] border border-border-strong px-[7px] py-1 font-mono text-[11px] font-medium text-text-faint hover:bg-bg-hover"
+          >
+            {comboLabel("K")}
+          </button>
+          <ThemeToggle />
           <IconButton onClick={() => navigate("/settings")} aria-label="Settings">
             <SettingsIcon size={13} />
           </IconButton>
         </div>
       </header>
 
-      {connections.length === 0 ? (
-        <EmptyState onAdd={() => navigate("/connections/new")} />
-      ) : (
-        <div className="flex flex-1 flex-col gap-5 px-12 py-9">
-          <div className="flex items-end justify-between">
-            <div className="flex flex-col gap-1">
-              <h1 className="text-[19px] font-semibold tracking-[-0.015em] text-text-primary">
-                Connections
-              </h1>
-              <div className="text-[12.5px] text-text-faint">
-                {connections.length} saved · vault unlocked
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="flex h-8 w-[220px] items-center gap-1.5 rounded-[7px] border border-border-strong bg-bg-inset px-2.5">
-                <Search size={11} className="text-text-quiet" />
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search connections"
-                  className="w-full bg-transparent text-[12.5px] text-text-primary placeholder:text-text-quiet outline-none"
-                />
-              </div>
-              <Button variant="primary" size="sm" onClick={() => navigate("/connections/new")}>
-                <Plus size={13} /> Add
-              </Button>
-            </div>
-          </div>
-
-          <div className="overflow-hidden rounded-[9px] border border-border-default">
-            {filtered.map((c) => (
-              <div
-                key={c.id}
-                onClick={() => openConnection(c.id)}
-                className="flex h-[62px] cursor-pointer items-center gap-3.5 border-b border-border-faint px-4 last:border-b-0 hover:bg-bg-hover/50"
-              >
-                <EngineTag tag={ENGINES[c.engine].tag} />
-                <div className="flex flex-1 flex-col gap-0.5">
-                  <div className="text-[13.5px] font-medium text-text-primary">{c.name}</div>
-                  <div className="font-mono text-[11.5px] text-text-faint">{c.dsn}</div>
+      <div className="dbeans-flow relative min-h-0 flex-1">
+        <ReactFlowProvider>
+          <ReactFlow
+            nodes={visibleNodes}
+            edges={[]}
+            nodeTypes={nodeTypes}
+            onNodesChange={onNodesChange}
+            onNodeDragStop={onNodeDragStop}
+            onNodeClick={onNodeClick}
+            fitView
+            fitViewOptions={{ padding: 0.3, maxZoom: 1 }}
+            minZoom={MIN_ZOOM}
+            maxZoom={MAX_ZOOM}
+            translateExtent={CANVAS_BOUNDS}
+            nodeExtent={CANVAS_BOUNDS}
+            proOptions={{ hideAttribution: true }}
+            panOnScroll
+            selectionOnDrag={false}
+          >
+            <Background variant={BackgroundVariant.Dots} gap={22} size={1.4} color="var(--color-border-strong)" />
+            <Controls showInteractive={false} />
+            <Panel position="top-right">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-[220px] items-center gap-1.5 rounded-[7px] border border-border-strong bg-bg-surface/90 px-2.5 backdrop-blur">
+                  <Search size={11} className="text-text-quiet" />
+                  <input
+                    ref={searchInputRef}
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="Search connections"
+                    className="w-full bg-transparent text-[12.5px] text-text-primary placeholder:text-text-quiet outline-none"
+                  />
                 </div>
-                <div className="w-[130px] text-[12px] text-text-faint">{c.lastUsed}</div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    onClick={(e) => e.stopPropagation()}
-                    className="flex w-5 items-center justify-center text-text-ghost outline-none hover:text-text-secondary"
-                  >
-                    <MoreHorizontal size={15} />
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent>
-                    <DropdownMenuItem onClick={() => openConnection(c.id)}>Open</DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeConnection(c.id);
-                      }}
-                      className="text-error-dim data-[highlighted]:text-error-text"
-                    >
-                      Remove
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <Button variant="primary" size="sm" onClick={() => navigate("/connections/new")}>
+                  <Plus size={13} /> Add
+                </Button>
               </div>
-            ))}
-            <div
-              onClick={() => navigate("/connections/new")}
-              className="flex h-[52px] cursor-pointer items-center gap-2.5 px-4 text-text-quiet hover:bg-bg-hover/50"
-            >
-              <div className="flex h-[30px] w-[30px] items-center justify-center rounded-[7px] border border-dashed border-border-control text-[13px]">
-                +
-              </div>
-              <div className="text-[12.5px]">Add a connection</div>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function EmptyState({ onAdd }: { onAdd: () => void }) {
-  return (
-    <div className="flex flex-1 items-center justify-center">
-      <div className="flex w-[400px] flex-col items-center gap-5 text-center">
-        <div className="flex h-[76px] w-[120px] flex-col items-center justify-center gap-1.5 rounded-[10px] border border-dashed border-border-control">
-          <div className="h-[5px] w-11 rounded-full bg-border-strong" />
-          <div className="h-[5px] w-11 rounded-full bg-border-subtle" />
-          <div className="h-[5px] w-11 rounded-full bg-border-faint" />
-        </div>
-        <div className="flex flex-col gap-2">
-          <div className="text-[17px] font-semibold tracking-[-0.01em] text-text-primary">
-            No connections yet
-          </div>
-          <div className="text-[13px] leading-[1.5] text-text-muted text-balance">
-            Point dbeans at a Postgres, MySQL, SQLite, Redis or Kafka source to start exploring.
-          </div>
-        </div>
-        <div className="mt-0.5 flex items-center gap-2.5">
-          <Button variant="primary" size="md" onClick={onAdd}>
-            <span className="text-sm leading-none">+</span> Add a connection
-          </Button>
-          <Button variant="secondary" size="md">
-            Open SQLite file
-          </Button>
-        </div>
-        <div className="mt-1 text-[11px] text-text-quiet">
-          or press <span className="font-mono">⌘N</span>
-        </div>
+            </Panel>
+          </ReactFlow>
+        </ReactFlowProvider>
       </div>
     </div>
   );

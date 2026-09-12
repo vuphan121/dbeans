@@ -1,25 +1,40 @@
+import { Bean } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function LogoMark({ size = 20 }: { size?: number }) {
-  const barW = Math.round(size * 0.45);
-  const barH = Math.max(2, Math.round(size * 0.1));
   return (
     <div
       style={{ width: size, height: size }}
-      className="flex shrink-0 flex-col items-center justify-center gap-[2px] rounded-[6px] border border-accent-border bg-accent-bg"
+      className="flex shrink-0 items-center justify-center rounded-[6px] border border-border-strong bg-bg-hover text-text-primary"
     >
-      <div style={{ width: barW, height: barH }} className="rounded-full bg-accent" />
-      <div style={{ width: barW, height: barH }} className="rounded-full bg-accent opacity-60" />
-      <div style={{ width: barW, height: barH }} className="rounded-full bg-accent opacity-30" />
+      <Bean size={Math.round(size * 0.62)} strokeWidth={2} />
     </div>
   );
 }
 
-export function Logo({ size = 20, className }: { size?: number; className?: string }) {
-  return (
-    <div className={cn("flex items-center gap-2", className)}>
+export function Logo({
+  size = 20,
+  className,
+  onClick,
+}: {
+  size?: number;
+  className?: string;
+  onClick?: () => void;
+}) {
+  const content = (
+    <>
       <LogoMark size={size} />
       <span className="text-[13px] font-semibold tracking-[-0.01em] text-text-primary">dbeans</span>
-    </div>
+    </>
   );
+
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className={cn("flex items-center gap-2 outline-none", className)}>
+        {content}
+      </button>
+    );
+  }
+
+  return <div className={cn("flex items-center gap-2", className)}>{content}</div>;
 }

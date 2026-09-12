@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
-import { ConnectionSwitcher } from "../ConnectionSwitcher";
 import { useKafkaStore } from "@/state/kafka";
 import { cn } from "@/lib/utils";
 
@@ -16,7 +15,6 @@ export function TopicBrowser() {
 
   return (
     <>
-      <ConnectionSwitcher />
       <div className="px-2.5 pb-1.5 pt-2">
         <div className="flex h-7 items-center gap-1.5 rounded-[6px] border border-border-default bg-bg-inset px-2">
           <Search size={10} className="text-text-ghost" />

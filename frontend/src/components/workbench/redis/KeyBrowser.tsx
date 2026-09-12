@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { Search, Plus } from "lucide-react";
-import { ConnectionSwitcher } from "../ConnectionSwitcher";
 import { useRedisStore } from "@/state/redis";
 import { cn } from "@/lib/utils";
 
@@ -24,7 +23,6 @@ export function KeyBrowser({ onNewKey }: { onNewKey: () => void }) {
 
   return (
     <>
-      <ConnectionSwitcher />
       <div className="flex items-center gap-1.5 px-2.5 pb-1.5 pt-2">
         <div className="flex h-7 flex-1 items-center gap-1.5 rounded-[6px] border border-border-default bg-bg-inset px-2">
           <Search size={10} className="text-text-ghost" />

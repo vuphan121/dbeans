@@ -18,6 +18,8 @@ interface WorkbenchState {
   addTab: () => void;
   closeTab: (id: string) => void;
   updateTabSql: (id: string, sql: string) => void;
+  openTable: (tableName: string) => void;
+  openSnippet: (name: string, sql: string) => void;
 }
 
 const initialTabs: WorkbenchTab[] = [
@@ -26,7 +28,7 @@ const initialTabs: WorkbenchTab[] = [
   { id: "tab_3", kind: "sql", title: "untitled 3", dirty: true, sql: "" },
 ];
 
-export const useWorkbenchStore = create<WorkbenchState>()((set) => ({
+export const useWorkbenchStore = create<WorkbenchState>()((set, get) => ({
   tabs: initialTabs,
   activeTabId: "tab_1",
 
@@ -54,4 +56,41 @@ export const useWorkbenchStore = create<WorkbenchState>()((set) => ({
     set((s) => ({
       tabs: s.tabs.map((t) => (t.id === id ? { ...t, sql, dirty: true } : t)),
     })),
+
+  // "users" has real mock rows, so it opens as a browsable table tab like the
+  // design shows. Every other table doesn't have seeded row data yet, so it
+  // opens as a prefilled SQL tab instead — still real, just honest about
+  // there being no live query engine behind it yet.
+  openTable: (tableName) => {
+    if (tableName === "users") {
+      const existing = get().tabs.find((t) => t.kind === "table" && t.title === "public.users");
+      if (existing) {
+        set({ activeTabId: existing.id });
+        return;
+      }
+      const id = `tab_${Date.now().toString(36)}`;
+      set((s) => ({ tabs: [...s.tabs, { id, kind: "table", title: "public.users" }], activeTabId: id }));
+      return;
+    }
+    const existing = get().tabs.find((t) => t.kind === "sql" && t.title === tableName);
+    if (existing) {
+      set({ activeTabId: existing.id });
+      return;
+    }
+    const id = `tab_${Date.now().toString(36)}`;
+    set((s) => ({
+      tabs: [...s.tabs, { id, kind: "sql", title: tableName, sql: `select * from public.${tableName} limit 100;\n` }],
+      activeTabId: id,
+    }));
+  },
+
+  openSnippet: (name, sql) => {
+    const existing = get().tabs.find((t) => t.kind === "sql" && t.title === name);
+    if (existing) {
+      set((s) => ({ tabs: s.tabs.map((t) => (t.id === existing.id ? { ...t, sql } : t)), activeTabId: existing.id }));
+      return;
+    }
+    const id = `tab_${Date.now().toString(36)}`;
+    set((s) => ({ tabs: [...s.tabs, { id, kind: "sql", title: name, sql }], activeTabId: id }));
+  },
 }));

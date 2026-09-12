@@ -6,6 +6,7 @@ import AddConnection from "@/pages/AddConnection";
 import Workbench from "@/pages/Workbench";
 import Settings from "@/pages/Settings";
 import { useAuthStore } from "@/state/auth";
+import { useConnectionsStore } from "@/state/connections";
 import { applyThemeToDocument, useSettingsStore, watchSystemTheme } from "@/state/settings";
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -17,7 +18,8 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
 export default function App() {
   const theme = useSettingsStore((s) => s.theme);
-  const restoreSession = useAuthStore((s) => s.restoreSession);
+  const { restoreSession, isUnlocked, token } = useAuthStore();
+  const loadConnections = useConnectionsStore((s) => s.loadConnections);
 
   useEffect(() => {
     watchSystemTheme();
@@ -27,6 +29,10 @@ export default function App() {
   useEffect(() => {
     applyThemeToDocument(theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (isUnlocked && token) loadConnections();
+  }, [isUnlocked, token, loadConnections]);
 
   return (
     <BrowserRouter>

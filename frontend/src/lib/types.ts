@@ -49,6 +49,13 @@ export type ConnectionFields =
   | ({ engine: "redis" } & RedisConnectionFields)
   | ({ engine: "kafka" } & KafkaConnectionFields);
 
+export interface CardLayout {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface SavedConnection {
   id: string;
   name: string;
@@ -56,4 +63,5 @@ export interface SavedConnection {
   dsn: string; // human-readable summary shown in lists
   lastUsed: string;
   fields: ConnectionFields;
+  layout: CardLayout;
 }

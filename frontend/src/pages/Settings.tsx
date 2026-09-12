@@ -6,11 +6,11 @@ import { Switch } from "@/components/ui/Switch";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Select } from "@/components/ui/Select";
 import { EngineTag } from "@/components/ui/Badge";
-import { ENGINES } from "@/lib/types";
 import { useSettingsStore } from "@/state/settings";
 import { useConnectionsStore } from "@/state/connections";
 import { useSnippetsStore } from "@/state/snippets";
 import { useAuthStore } from "@/state/auth";
+import { comboLabel } from "@/lib/platform";
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -54,7 +54,7 @@ export default function Settings() {
           <div className="text-[13px] font-semibold text-text-primary">Settings</div>
         </div>
         <div className="rounded-[5px] border border-border-strong px-[7px] py-1 font-mono text-[11px] text-text-faint">
-          ⌘,
+          {comboLabel(",")}
         </div>
       </header>
 
@@ -139,7 +139,7 @@ export default function Settings() {
           >
             {connections.map((c) => (
               <div key={c.id} className="flex h-[46px] items-center gap-3 border-b border-border-faint px-3.5 last:border-b-0">
-                <EngineTag tag={ENGINES[c.engine].tag} size={24} />
+                <EngineTag engine={c.engine} size={24} />
                 <div className="text-[12.5px] font-medium text-text-primary">{c.name}</div>
                 <div className="font-mono text-[11px] text-text-faint">{c.dsn}</div>
                 <div className="ml-auto flex gap-3.5 text-[11.5px] text-text-muted">

@@ -36,10 +36,12 @@ One person: the developer running this for their own side projects, home lab, or
 - Sign-in and query activity are logged as analytics events (see §5 Settings) for the user's own visibility into their usage.
 
 ### Connections
-- Add/edit/delete saved connections (host, port, database, credentials, SSL options).
+- Add/edit/delete saved connections (host, port, database, credentials, SSL options). Name is required — the home screen always shows the name you gave a connection, never a raw connection string.
 - Support PostgreSQL, MySQL/MariaDB, SQLite, Redis, and Kafka.
-- Test-connection before saving.
-- Credentials stored encrypted at rest (see [ARCHITECTURE.md](ARCHITECTURE.md)).
+- Test-connection before saving (client-side form check for now — see the reachability status below for the real server-side check).
+- Home screen is a pannable/zoomable 2D board (not a list) — each connection is a card you can drag and resize; position/size snap to the background grid.
+- Each connection shows a live reachability indicator (green/red/gray dot) — a real TCP check against the host:port, cached ~60s, refreshed on page visits. This is *not* a credentials/auth check yet (see ARCHITECTURE.md §5).
+- **Not yet implemented:** credentials are stored as plain JSONB in the operator database, not encrypted at rest — flagged as a known gap, not a v1 claim.
 
 ### Redis & Kafka inspection
 - **Redis:** browse keys (pattern search), view/edit values by type (string, hash, list, set, zset), edit TTL, delete/create keys.
@@ -72,12 +74,16 @@ One person: the developer running this for their own side projects, home lab, or
 - Manage saved connections and snippets in one place.
 - Sign out.
 
+### Scheduled jobs / data orchestration (planned, not built)
+- A job = a saved SQL query, a connection to run it against, and a cron schedule.
+- Deployment target is Vercel, which has no persistent scheduler — jobs are triggered by an external service ([cron-job.org](https://cron-job.org)) hitting one shared, secret-gated endpoint on a fixed interval; dbeans itself decides what's due each tick and runs it. The user configures **one** external cron entry total, not one per job — see ARCHITECTURE.md §6.
+- v1 of this feature ships with job runs **stubbed** (logged, not actually executed) since real query execution against target databases doesn't exist yet — see the SQL editor/results grid notes above.
+
 ## 6. Explicitly deferred (possible future phases)
 
 - ER diagrams / visual schema explorer.
 - Additional engines (MSSQL, MongoDB, etc.) — architecture should make this easy to add later, but not built in v1.
 - Query plan visualization (`EXPLAIN` output as a diagram).
-- Scheduled/saved query jobs.
 - Import wizards (CSV → table).
 
 ## 7. Success criteria for v1

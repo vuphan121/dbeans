@@ -95,7 +95,7 @@ export function ConnectionCard({ data, selected }: NodeProps) {
                 : "Reachability unknown"
           }
           className={cn(
-            "absolute bottom-3 right-3 h-2 w-2 rounded-full",
+            "absolute right-2 top-2 h-2 w-2 rounded-full",
             connection.status === "online" && "bg-success-dot",
             connection.status === "offline" && "bg-error-dot",
             (!connection.status || connection.status === "unknown") && "bg-border-control",

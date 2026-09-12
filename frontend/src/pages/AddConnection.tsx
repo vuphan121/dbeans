@@ -184,9 +184,11 @@ export default function AddConnection() {
     return `${host}:${port}/${engine === "redis" ? redisDbIndex : database}`;
   }
 
+  const canSave = name.trim().length > 0;
+
   function handleSave() {
-    const finalName = name.trim() || buildDsn();
-    addConnection(finalName, buildFields(), buildDsn());
+    if (!canSave) return;
+    addConnection(name.trim(), buildFields(), buildDsn());
     navigate("/connections");
   }
 
@@ -240,8 +242,13 @@ export default function AddConnection() {
             </Field>
           )}
 
-          <Field label="Name">
-            <Input mono value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. my-app · production" />
+          <Field label="Name *">
+            <Input
+              mono
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="e.g. my-app · production"
+            />
           </Field>
 
           {isSql && (
@@ -459,7 +466,7 @@ export default function AddConnection() {
             <Button variant="ghost" size="md" onClick={() => navigate(-1)}>
               Cancel
             </Button>
-            <Button variant="primary" size="md" onClick={handleSave}>
+            <Button variant="primary" size="md" onClick={handleSave} disabled={!canSave} title={canSave ? undefined : "Give this connection a name first"}>
               Save connection
             </Button>
           </div>

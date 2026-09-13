@@ -91,8 +91,14 @@ export default function Jobs() {
           id: `${depId}->${job.id}`,
           source: depId,
           target: job.id,
+          // Freeform bezier curves converging on the same target handle from
+          // several sources tangle visually — smoothstep's orthogonal
+          // routing (what n8n/Dagster-style DAG views use) reads as
+          // organized even when multiple edges land on one node.
+          type: "smoothstep",
+          pathOptions: { borderRadius: 12 },
           markerEnd: { type: MarkerType.ArrowClosed, color: "var(--color-text-faint)" },
-          style: { stroke: "var(--color-text-faint)" },
+          style: { stroke: "var(--color-text-faint)", strokeWidth: 1.5 },
         });
       }
     }

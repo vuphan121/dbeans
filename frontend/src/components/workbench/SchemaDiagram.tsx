@@ -8,9 +8,14 @@ import {
   MarkerType,
   Handle,
   Position,
+  BaseEdge,
+  getSmoothStepPath,
+  useInternalNode,
   type Node,
   type Edge,
   type NodeProps,
+  type EdgeProps,
+  type InternalNode,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import dagre from "dagre";
@@ -49,8 +54,12 @@ function TableNode({ data }: NodeProps<Node<TableNodeData>>) {
       style={{ width: NODE_WIDTH }}
       className="overflow-hidden rounded-[8px] border border-border-elevated bg-bg-raised shadow-lg"
     >
-      <Handle type="target" position={Position.Left} className="!border-none !bg-border-focus" />
-      <Handle type="source" position={Position.Right} className="!border-none !bg-border-focus" />
+      {/* Invisible — floating edges below compute their own attachment point
+          per-edge based on where the other table actually sits, rather than
+          funneling every connection through one fixed side of the node.
+          React Flow still needs a real source/target handle to exist. */}
+      <Handle type="target" position={Position.Left} style={{ opacity: 0 }} />
+      <Handle type="source" position={Position.Right} style={{ opacity: 0 }} />
       <div className="flex items-center gap-1.5 border-b border-border-default bg-bg-hover px-2.5 py-1.5">
         <Table2 size={11} className="shrink-0 text-text-faint" />
         <span className="truncate text-[12px] font-semibold text-text-primary">{table.name}</span>
@@ -85,6 +94,77 @@ function TableNode({ data }: NodeProps<Node<TableNodeData>>) {
 }
 
 const nodeTypes = { table: TableNode };
+
+// "Floating" edges — React Flow's own documented pattern for exactly the
+// problem a hub table causes (many tables referencing one, e.g. "users"):
+// with fixed Left/Right handles every one of those edges funnels through
+// the same single point on the hub's border, reading as a tangled knot no
+// matter how the layout spaces the columns. Instead, each edge's endpoint
+// is computed per-render from where the *other* node's center actually is
+// — the intersection of the line between the two node centers with the
+// node's own rectangle — so connections spread around the hub's border
+// roughly where they're coming from, the way a hand-drawn ERD would.
+function getNodeIntersection(intersectionNode: InternalNode, targetNode: InternalNode) {
+  const { width, height } = intersectionNode.measured as { width: number; height: number };
+  const intersectionPos = intersectionNode.internals.positionAbsolute;
+  const targetPos = targetNode.internals.positionAbsolute;
+  const targetMeasured = targetNode.measured as { width: number; height: number };
+
+  const w = width / 2;
+  const h = height / 2;
+  const x2 = intersectionPos.x + w;
+  const y2 = intersectionPos.y + h;
+  const x1 = targetPos.x + targetMeasured.width / 2;
+  const y1 = targetPos.y + targetMeasured.height / 2;
+
+  const xx1 = (x1 - x2) / (2 * w) - (y1 - y2) / (2 * h);
+  const yy1 = (x1 - x2) / (2 * w) + (y1 - y2) / (2 * h);
+  const a = 1 / (Math.abs(xx1) + Math.abs(yy1) || 1);
+  const xx3 = a * xx1;
+  const yy3 = a * yy1;
+
+  return { x: w * (xx3 + yy3) + x2, y: h * (-xx3 + yy3) + y2 };
+}
+
+function getEdgePosition(node: InternalNode, intersectionPoint: { x: number; y: number }): Position {
+  const pos = node.internals.positionAbsolute;
+  const measured = node.measured as { width: number; height: number };
+  const nx = Math.round(pos.x);
+  const ny = Math.round(pos.y);
+  const px = Math.round(intersectionPoint.x);
+  const py = Math.round(intersectionPoint.y);
+
+  if (px <= nx + 1) return Position.Left;
+  if (px >= nx + measured.width - 1) return Position.Right;
+  if (py <= ny + 1) return Position.Top;
+  if (py >= ny + measured.height - 1) return Position.Bottom;
+  return Position.Top;
+}
+
+function FloatingEdge({ id, source, target, markerEnd, style }: EdgeProps) {
+  const sourceNode = useInternalNode(source);
+  const targetNode = useInternalNode(target);
+  if (!sourceNode || !targetNode) return null;
+
+  const sourceIntersection = getNodeIntersection(sourceNode, targetNode);
+  const targetIntersection = getNodeIntersection(targetNode, sourceNode);
+  const sourcePos = getEdgePosition(sourceNode, sourceIntersection);
+  const targetPos = getEdgePosition(targetNode, targetIntersection);
+
+  const [path] = getSmoothStepPath({
+    sourceX: sourceIntersection.x,
+    sourceY: sourceIntersection.y,
+    sourcePosition: sourcePos,
+    targetX: targetIntersection.x,
+    targetY: targetIntersection.y,
+    targetPosition: targetPos,
+    borderRadius: 12,
+  });
+
+  return <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style} />;
+}
+
+const edgeTypes = { floating: FloatingEdge };
 
 function tableNodeHeight(table: TableInfo): number {
   return 36 + table.columns.length * 24 + 8;
@@ -183,8 +263,7 @@ function DiagramInner({ connectionId }: { connectionId: string }) {
         id: `${fk.fromTable}.${fk.fromColumn}->${fk.toTable}.${fk.toColumn}-${i}`,
         source: fk.fromTable,
         target: fk.toTable,
-        type: "smoothstep",
-        pathOptions: { borderRadius: 12 },
+        type: "floating",
         markerEnd: { type: MarkerType.ArrowClosed, color: "var(--color-text-faint)" },
         style: { stroke: "var(--color-text-faint)", strokeWidth: 1.5 },
       })) as Edge[],
@@ -221,6 +300,7 @@ function DiagramInner({ connectionId }: { connectionId: string }) {
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         fitView
         fitViewOptions={{ padding: 0.15 }}
         proOptions={{ hideAttribution: true }}

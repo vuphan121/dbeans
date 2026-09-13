@@ -99,7 +99,7 @@ export default function Jobs() {
           pathOptions: { borderRadius: 12 },
           markerEnd: { type: MarkerType.ArrowClosed, color: "var(--color-text-faint)" },
           style: { stroke: "var(--color-text-faint)", strokeWidth: 1.5 },
-        });
+        } as Edge);
       }
     }
     return result;

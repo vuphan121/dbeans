@@ -2,6 +2,8 @@
 
 Two separate Vercel projects, from the same repo: one for `frontend/`, one for `backend/`. They're different runtimes (a static Vite build vs. a Go server) and end up on different domains, so they can't be one project. **Verified live** using this exact process.
 
+**Live:** https://dbeans.vercel.app (frontend) → https://dbeans-api.vercel.app (backend).
+
 ## 1. Backend (`backend/`)
 
 1. **New Vercel project** → import this repo → **Root Directory: `backend`**.
@@ -30,3 +32,12 @@ Once both are live, open the frontend URL, sign in with `SEED_USERNAME`/`SEED_PA
 ## Alternative: traditional host for the backend
 
 The backend is also just a normal Go binary (`go build ./backend && ./dbeans-server`, reading the same env vars plus `PORT`) — it works unmodified on Railway, Fly.io, Render, or a small VPS, with no execution-time ceiling and no retry-delay caveat. If you go this route, only the frontend needs Vercel; point `VITE_API_URL` at wherever that host puts the backend instead.
+
+## Getting a clean `something.vercel.app` URL instead of the random one
+
+By default each project's URL is `<project-name>-<random-hash>-<team>.vercel.app` — the plain `<project-name>.vercel.app` form is only assigned if that exact name isn't already taken by *any* Vercel user globally (these subdomains are shared across the whole platform, not scoped to your account). Two gotchas discovered getting this project onto `dbeans.vercel.app` / `dbeans-api.vercel.app`:
+
+1. **`vercel alias set <deployment> <alias>` is a static, one-time pointer** — it does *not* automatically follow later deploys the way the project's default auto-generated alias does. Every time you redeploy, the custom alias keeps pointing at the *old* deployment until you explicitly re-run `vercel alias set` against the new one. Forgetting this looks exactly like a stale-env-var bug (the custom URL appears to ignore config changes that the default URL picks up fine).
+2. **New projects default to Vercel's SSO deployment protection** (`all_except_custom_domains`), which exempts the project's own auto-generated domain but *not* a plain `vercel alias set` alias — so a manually-aliased `.vercel.app` subdomain gets redirected to a Vercel login wall until you run `vercel project protection disable <project> --sso`. Fine for this app since real auth happens at the application layer (bearer tokens / `CRON_SECRET`), not via Vercel's own gate.
+
+If you rename/re-alias either project, redo both steps and also update the *other* project's env var that points at it (`ALLOWED_ORIGINS` on the backend ↔ `VITE_API_URL` on the frontend), then redeploy both.

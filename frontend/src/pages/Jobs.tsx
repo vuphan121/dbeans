@@ -218,13 +218,6 @@ export default function Jobs() {
                 </Button>
               </div>
             </Panel>
-            {jobs.length === 0 && (
-              <Panel position="top-left">
-                <div className="ml-2 mt-2 max-w-[280px] rounded-[8px] border border-border-default bg-bg-surface/90 px-3.5 py-3 text-[11.5px] text-text-faint backdrop-blur">
-                  No scheduled queries yet. Add one to run a saved SQL query against a connection on a cron schedule.
-                </div>
-              </Panel>
-            )}
           </ReactFlow>
         </ReactFlowProvider>
       </div>

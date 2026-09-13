@@ -81,7 +81,8 @@ One person: the developer running this for their own side projects, home lab, or
 - Own canvas UI (`/jobs`), mirroring the connections board — a card per job, create/edit/pause/delete from there. Dependency arrows between jobs are drawn automatically on the canvas from each job's configured dependencies (no manual arrow-drawing).
 - "Depends on" is a searchable, multi-select dropdown over the other jobs (not a fixed checkbox list), so it stays usable as the number of jobs grows.
 - Running a job on demand (today or a backfill for a past/future logical date) and reviewing run history happens from the job's edit panel, via a Dagster/Airflow-style calendar of the last ~9 weeks (colored by that date's latest run status) plus a recent-runs list — not from the canvas card's context menu, which only has Edit/Pause/Remove.
-- **Built and executing for real** against Postgres connections (not stubbed) — MySQL/SQLite connections can be attached to a job but fail at run time until those drivers are wired up (see ARCHITECTURE.md §2).
+- A backfill can optionally cascade **downstream** (Airflow's term for it) — a checkbox next to the Backfill button also (re)runs every job that transitively depends on the one being backfilled, in dependency order, stopping a branch as soon as something in it doesn't succeed.
+- **Built and executing for real** against Postgres connections (not stubbed) — MySQL/SQLite connections can be attached to a job but fail at run time until those drivers are wired up (see ARCHITECTURE.md §2). A job's connection can be any saved Postgres connection, including one pointed at dbeans' own operator database — useful for meta jobs (e.g. logging other jobs' run history into a table of its own).
 
 ## 6. Explicitly deferred (possible future phases)
 

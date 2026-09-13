@@ -180,7 +180,7 @@ export default function Settings() {
           </Section>
 
           <Section
-            title="Scheduled queries"
+            title="Scheduled jobs"
             action={
               <button onClick={() => navigate("/jobs")} className="text-[12px] text-text-tertiary hover:text-text-primary">
                 Open board →
@@ -191,8 +191,8 @@ export default function Settings() {
               <div className="text-[11.5px] text-text-faint">
                 dbeans has no built-in scheduler — an external service like{" "}
                 <span className="text-text-secondary">cron-job.org</span> hits this one URL on a fixed interval (every
-                15 minutes minimum), and dbeans itself decides which of your {jobs.length} scheduled quer
-                {jobs.length === 1 ? "y is" : "ies are"} due. Paste this exact URL in as a GET request there — you
+                15 minutes minimum), and dbeans itself decides which of your {jobs.length} scheduled job
+                {jobs.length === 1 ? " is" : "s are"} due. Paste this exact URL in as a GET request there — you
                 only need to configure it once, not per job.
               </div>
               {tickUrlError ? (

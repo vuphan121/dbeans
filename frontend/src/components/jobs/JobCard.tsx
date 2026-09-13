@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Handle, NodeResizer, Position, type NodeProps } from "@xyflow/react";
-import { Clock } from "lucide-react";
+import { Clock, Webhook } from "lucide-react";
 import { EngineTag } from "@/components/ui/Badge";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/ContextMenu";
 import { useJobsStore } from "@/state/jobs";
@@ -50,8 +50,12 @@ export function JobCard({ data, selected }: NodeProps) {
             )}
           >
             <div className="flex items-start gap-2.5">
-              {connection ? (
+              {job.jobType === "query" && connection ? (
                 <EngineTag engine={connection.engine} size={30} />
+              ) : job.jobType === "http_request" ? (
+                <div className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[7px] border border-border-strong bg-bg-hover text-text-tertiary">
+                  <Webhook size={14} />
+                </div>
               ) : (
                 <div className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[7px] border border-border-strong bg-bg-hover text-text-tertiary">
                   <Clock size={14} />
@@ -59,7 +63,9 @@ export function JobCard({ data, selected }: NodeProps) {
               )}
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <div className="truncate text-[13.5px] font-medium text-text-primary">{job.name}</div>
-                <div className="truncate text-[11px] text-text-faint">{connection?.name ?? "connection removed"}</div>
+                <div className="truncate text-[11px] text-text-faint">
+                  {job.jobType === "http_request" ? (job.config.url ?? "HTTP request") : (connection?.name ?? "connection removed")}
+                </div>
               </div>
             </div>
 

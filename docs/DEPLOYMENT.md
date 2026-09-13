@@ -32,7 +32,7 @@ Two separate Vercel projects, from the same repo: one for `frontend/`, one for `
 5. Deploy (push to the connected Git branch — see the Root Directory gotcha below).
 6. Go back to the backend project and set `ALLOWED_ORIGINS` to this frontend's URL (it couldn't be known until now), then redeploy the backend once more so CORS actually allows it.
 
-Once both are live, open the frontend URL, sign in with `SEED_USERNAME`/`SEED_PASSWORD`, and you're running. **Scheduled queries:** open **Settings** — it shows the exact tick URL (with the secret baked in) to paste into [cron-job.org](https://cron-job.org) (or any scheduler that can hit a URL on an interval) as a `GET` request. cron-job.org's own free-tier minimum interval is a practical floor; this project runs it every 5 minutes in practice with no issues. You only ever configure **one** external cron entry, regardless of how many scheduled queries you add.
+Once both are live, open the frontend URL, sign in with `SEED_USERNAME`/`SEED_PASSWORD`, and you're running. **Scheduled jobs:** open **Settings** — it shows the exact tick URL (with the secret baked in) to paste into [cron-job.org](https://cron-job.org) (or any scheduler that can hit a URL on an interval) as a `GET` request. cron-job.org's own free-tier minimum interval is a practical floor; this project runs it every 5 minutes in practice with no issues. You only ever configure **one** external cron entry, regardless of how many query or HTTP request jobs you add.
 
 ## Alternative: traditional host for the backend
 

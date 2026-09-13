@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { to: "/connections", label: "Connections", icon: Database },
-  { to: "/jobs", label: "Scheduled queries", icon: Clock },
+  { to: "/jobs", label: "Scheduled jobs", icon: Clock },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 

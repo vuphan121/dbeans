@@ -142,12 +142,22 @@ export interface KafkaMessage {
 
 export type CheckMode = "none" | "fail_if_no_rows" | "fail_if_rows";
 export type JobStatus = "never_run" | "success" | "failed" | "blocked";
+export type JobType = "query" | "http_request";
+
+export interface HttpRequestJobConfig {
+  url: string;
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  headers: Record<string, string>;
+  body: string;
+}
 
 export interface ScheduledJob {
   id: string;
+  jobType: JobType;
   connectionId: string;
   name: string;
   sql: string;
+  config: Partial<HttpRequestJobConfig>;
   cronExpr: string;
   enabled: boolean;
   dependsOn: string[];

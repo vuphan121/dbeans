@@ -172,7 +172,7 @@ export default function Jobs() {
         <div className="flex items-center gap-3">
           <Logo size={20} onClick={() => navigate("/connections")} />
           <div className="h-4 w-px bg-border-subtle" />
-          <div className="text-[13px] font-medium text-text-secondary">Scheduled queries</div>
+          <div className="text-[13px] font-medium text-text-secondary">Scheduled jobs</div>
         </div>
         <div className="flex items-center gap-2">
           <ThemeToggle />
@@ -209,7 +209,7 @@ export default function Jobs() {
                     ref={searchInputRef}
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search scheduled queries"
+                    placeholder="Search scheduled jobs"
                     className="w-full bg-transparent text-[12.5px] text-text-primary placeholder:text-text-quiet outline-none"
                   />
                 </div>

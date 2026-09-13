@@ -10,7 +10,7 @@ import { useJobsStore } from "@/state/jobs";
 import { useAuthStore } from "@/state/auth";
 import { useSettingsStore } from "@/state/settings";
 import { runQuery, ApiError } from "@/lib/api";
-import { SQL_ENGINES, type CheckMode } from "@/lib/types";
+import { SQL_ENGINES, type CheckMode, type HttpRequestJobConfig, type JobType } from "@/lib/types";
 import { SqlEditor } from "@/components/workbench/SqlEditor";
 import { JobRunCalendar } from "@/components/jobs/JobRunCalendar";
 import { DependsOnPicker } from "@/components/jobs/DependsOnPicker";
@@ -29,6 +29,13 @@ const CHECK_MODE_OPTIONS: { value: CheckMode; label: string }[] = [
   { value: "fail_if_rows", label: "Fail if the query returns any rows" },
 ];
 
+const JOB_TYPE_OPTIONS = [
+  { value: "query", label: "Query — run SQL against a saved connection" },
+  { value: "http_request", label: "HTTP request — call an API and ignore its response body" },
+];
+
+const WEBHOOK_METHOD_OPTIONS = ["GET", "POST", "PUT", "PATCH", "DELETE"].map((value) => ({ value, label: value }));
+
 export default function AddJob() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
@@ -46,8 +53,15 @@ export default function AddJob() {
   const sqlConnections = useMemo(() => connections.filter((c) => SQL_ENGINES.includes(c.engine)), [connections]);
 
   const [name, setName] = useState(existing?.name ?? "");
+  const [jobType, setJobType] = useState<JobType>(existing?.jobType ?? "query");
   const [connectionId, setConnectionId] = useState(existing?.connectionId ?? sqlConnections[0]?.id ?? "");
   const [sql, setSql] = useState(existing?.sql ?? "");
+  const [requestUrl, setRequestUrl] = useState(existing?.config.url ?? "");
+  const [requestMethod, setRequestMethod] = useState<HttpRequestJobConfig["method"]>(existing?.config.method ?? "POST");
+  const [requestHeaders, setRequestHeaders] = useState(
+    Object.keys(existing?.config.headers ?? {}).length > 0 ? JSON.stringify(existing?.config.headers, null, 2) : "{}",
+  );
+  const [requestBody, setRequestBody] = useState(existing?.config.body ?? "");
   const [cronExpr, setCronExpr] = useState(existing?.cronExpr ?? CRON_PRESETS[0].value);
   const [dependsOn, setDependsOn] = useState<string[]>(existing?.dependsOn ?? []);
   const [retryLimit, setRetryLimit] = useState(String(existing?.retryLimit ?? 0));
@@ -61,8 +75,13 @@ export default function AddJob() {
   useEffect(() => {
     if (existing) {
       setName(existing.name);
+      setJobType(existing.jobType);
       setConnectionId(existing.connectionId);
       setSql(existing.sql);
+      setRequestUrl(existing.config.url ?? "");
+      setRequestMethod(existing.config.method ?? "POST");
+      setRequestHeaders(Object.keys(existing.config.headers ?? {}).length > 0 ? JSON.stringify(existing.config.headers, null, 2) : "{}");
+      setRequestBody(existing.config.body ?? "");
       setCronExpr(existing.cronExpr);
       setDependsOn(existing.dependsOn);
       setRetryLimit(String(existing.retryLimit));
@@ -72,7 +91,8 @@ export default function AddJob() {
   }, [existing]);
 
   const otherJobs = jobs.filter((j) => j.id !== id);
-  const canSave = name.trim().length > 0 && connectionId && sql.trim().length > 0;
+  const hasAction = jobType === "query" ? Boolean(connectionId && sql.trim()) : requestUrl.trim().length > 0;
+  const canSave = name.trim().length > 0 && cronExpr.trim().length > 0 && hasAction;
 
   function toggleDependency(depId: string) {
     setDependsOn((prev) => (prev.includes(depId) ? prev.filter((d) => d !== depId) : [...prev, depId]));
@@ -94,15 +114,32 @@ export default function AddJob() {
   async function handleSave() {
     if (!canSave) return;
     setSaving(true);
+    let config: Partial<HttpRequestJobConfig> = {};
+    if (jobType === "http_request") {
+      try {
+        const parsed = JSON.parse(requestHeaders || "{}") as unknown;
+        if (!parsed || Array.isArray(parsed) || typeof parsed !== "object" || Object.values(parsed).some((value) => typeof value !== "string")) {
+          throw new Error("Headers must be a JSON object whose values are strings");
+        }
+        config = { url: requestUrl.trim(), method: requestMethod, headers: parsed as Record<string, string>, body: requestBody };
+      } catch (err) {
+        setTestState("fail");
+        setTestMessage(err instanceof Error ? err.message : "Headers must be valid JSON");
+        setSaving(false);
+        return;
+      }
+    }
     const input = {
       name: name.trim(),
-      connectionId,
-      sql,
+      jobType,
+      connectionId: jobType === "query" ? connectionId : "",
+      sql: jobType === "query" ? sql : "",
+      config,
       cronExpr: cronExpr.trim(),
       dependsOn,
       retryLimit: Number(retryLimit) || 0,
       retryDelaySeconds: Number(retryDelaySeconds) || 0,
-      checkMode,
+      checkMode: jobType === "query" ? checkMode : "none" as CheckMode,
     };
     try {
       if (isEditing && id) {
@@ -123,44 +160,94 @@ export default function AddJob() {
     <div className="flex h-full items-center justify-center bg-bg-app p-8">
       <div className="flex max-h-full w-[680px] flex-col gap-5 overflow-y-auto rounded-xl border border-border-strong bg-bg-app p-8">
         <div className="text-[16px] font-semibold tracking-[-0.01em] text-text-primary">
-          {isEditing ? "Edit scheduled query" : "New scheduled query"}
+          {isEditing ? "Edit scheduled job" : "New job"}
         </div>
 
         <Field label="Name">
           <Input mono value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. nightly churn rollup" />
         </Field>
 
-        <Field label="Connection">
-          {sqlConnections.length === 0 ? (
-            <div className="rounded-[7px] border border-border-input bg-bg-inset px-[11px] py-2 text-[12px] text-text-faint">
-              No SQL connections yet — add one first.
+        <Field label="Job type">
+          <Select
+            value={jobType}
+            onChange={(value) => {
+              setJobType(value as JobType);
+              setTestState("idle");
+            }}
+            options={JOB_TYPE_OPTIONS}
+          />
+        </Field>
+
+        {jobType === "query" ? (
+          <>
+            <Field label="Connection">
+              {sqlConnections.length === 0 ? (
+                <div className="rounded-[7px] border border-border-input bg-bg-inset px-[11px] py-2 text-[12px] text-text-faint">
+                  No SQL connections yet — add one first.
+                </div>
+              ) : (
+                <Select
+                  value={connectionId}
+                  onChange={setConnectionId}
+                  options={sqlConnections.map((c) => ({ value: c.id, label: c.name }))}
+                />
+              )}
+            </Field>
+
+            <Field label="SQL query">
+              <div className="h-[180px] overflow-hidden rounded-[7px] border border-border-input">
+                <SqlEditor
+                  value={sql}
+                  onChange={setSql}
+                  theme={resolvedTheme}
+                  fontSize={editorFontSize}
+                  onRun={testQuery}
+                  connectionId={connectionId}
+                />
+              </div>
+            </Field>
+
+            <div className="flex items-center justify-between">
+              <Button variant="secondary" size="sm" onClick={testQuery} disabled={!connectionId || !sql.trim() || testState === "testing"}>
+                {testState === "testing" ? "Running…" : "Test query"}
+              </Button>
             </div>
-          ) : (
-            <Select
-              value={connectionId}
-              onChange={setConnectionId}
-              options={sqlConnections.map((c) => ({ value: c.id, label: c.name }))}
-            />
-          )}
-        </Field>
+          </>
+        ) : (
+          <>
+            <Field label="URL">
+              <Input mono value={requestUrl} onChange={(e) => setRequestUrl(e.target.value)} placeholder="https://api.example.com/tasks/run" />
+            </Field>
+            <Field label="HTTP method">
+              <Select value={requestMethod} onChange={(value) => setRequestMethod(value as HttpRequestJobConfig["method"])} options={WEBHOOK_METHOD_OPTIONS} />
+            </Field>
+            <Field label="Headers (JSON)">
+              <textarea
+                value={requestHeaders}
+                onChange={(e) => setRequestHeaders(e.target.value)}
+                rows={4}
+                spellCheck={false}
+                placeholder={'{\n  "Authorization": "Bearer …"\n}'}
+                className="w-full resize-y rounded-[7px] border border-border-input bg-bg-inset px-[11px] py-2 font-mono text-[12px] leading-relaxed text-text-primary outline-none focus:border-border-focus"
+              />
+            </Field>
+            <Field label="Request body (optional)">
+              <textarea
+                value={requestBody}
+                onChange={(e) => setRequestBody(e.target.value)}
+                rows={6}
+                spellCheck={false}
+                placeholder={'{\n  "date": "{{date}}"\n}'}
+                className="w-full resize-y rounded-[7px] border border-border-input bg-bg-inset px-[11px] py-2 font-mono text-[12px] leading-relaxed text-text-primary outline-none focus:border-border-focus"
+              />
+              <div className="text-[11px] text-text-faint">
+                dbeans sends the request and records success for any 2xx status. The response body is ignored. Date placeholders work in the URL, headers, and body.
+              </div>
+            </Field>
+          </>
+        )}
 
-        <Field label="SQL query">
-          <div className="h-[180px] overflow-hidden rounded-[7px] border border-border-input">
-            <SqlEditor
-              value={sql}
-              onChange={setSql}
-              theme={resolvedTheme}
-              fontSize={editorFontSize}
-              onRun={testQuery}
-              connectionId={connectionId}
-            />
-          </div>
-        </Field>
-
-        <div className="flex items-center justify-between">
-          <Button variant="secondary" size="sm" onClick={testQuery} disabled={!connectionId || !sql.trim() || testState === "testing"}>
-            {testState === "testing" ? "Running…" : "Test query"}
-          </Button>
+        <div className="min-h-4">
           {testState !== "idle" && testState !== "testing" && (
             <div className={`flex items-center gap-1.5 text-[11.5px] ${testState === "pass" ? "text-success-text" : "text-error-text"}`}>
               {testState === "pass" ? <Check size={12} /> : <AlertCircle size={12} />}
@@ -206,9 +293,11 @@ export default function AddJob() {
           </Field>
         </div>
 
-        <Field label="Check">
-          <Select value={checkMode} onChange={(v) => setCheckMode(v as CheckMode)} options={CHECK_MODE_OPTIONS} className="w-full" />
-        </Field>
+        {jobType === "query" && (
+          <Field label="Check">
+            <Select value={checkMode} onChange={(v) => setCheckMode(v as CheckMode)} options={CHECK_MODE_OPTIONS} className="w-full" />
+          </Field>
+        )}
 
         {isEditing && existing && (
           <ToggleRow
@@ -230,7 +319,7 @@ export default function AddJob() {
           </Button>
           <Button variant="primary" size="md" onClick={handleSave} disabled={!canSave || saving}>
             {saving ? <Loader2 size={13} className="animate-spin" /> : null}
-            {isEditing ? "Save changes" : "Create scheduled query"}
+            {isEditing ? "Save changes" : "Create job"}
           </Button>
         </div>
       </div>

@@ -62,15 +62,17 @@ CREATE TABLE IF NOT EXISTS connections (
 ALTER TABLE connections ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'unknown';
 ALTER TABLE connections ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMPTZ;
 
--- A job = a saved SQL query + a target connection + a cron schedule, with
--- optional dependencies on other jobs, retry policy, and a post-run check
--- against the query's own result. See docs/PRD.md "Scheduled jobs".
+-- A job is a typed scheduled action. Existing rows are query jobs; newer
+-- types such as HTTP requests keep their own settings in config and do not need a
+-- database connection. See docs/PRD.md "Scheduled jobs".
 CREATE TABLE IF NOT EXISTS jobs (
 	id TEXT PRIMARY KEY,
 	user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-	connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+	connection_id TEXT REFERENCES connections(id) ON DELETE CASCADE,
 	name TEXT NOT NULL,
-	sql TEXT NOT NULL,
+	job_type TEXT NOT NULL DEFAULT 'query',
+	sql TEXT,
+	config JSONB NOT NULL DEFAULT '{}',
 	cron_expr TEXT NOT NULL,
 	enabled BOOLEAN NOT NULL DEFAULT true,
 	depends_on JSONB NOT NULL DEFAULT '[]',
@@ -83,6 +85,11 @@ CREATE TABLE IF NOT EXISTS jobs (
 	last_status TEXT NOT NULL DEFAULT 'never_run',
 	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS job_type TEXT NOT NULL DEFAULT 'query';
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS config JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE jobs ALTER COLUMN connection_id DROP NOT NULL;
+ALTER TABLE jobs ALTER COLUMN sql DROP NOT NULL;
 
 CREATE TABLE IF NOT EXISTS job_runs (
 	id BIGSERIAL PRIMARY KEY,

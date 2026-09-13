@@ -13,6 +13,7 @@ import { useSettingsStore } from "@/state/settings";
 import { runQuery, ApiError } from "@/lib/api";
 import { SQL_ENGINES, type CheckMode } from "@/lib/types";
 import { SqlEditor } from "@/components/workbench/SqlEditor";
+import { JobRunCalendar } from "@/components/jobs/JobRunCalendar";
 import { renderJobTemplate } from "@/lib/jobTemplate";
 
 const CRON_PRESETS = [
@@ -251,6 +252,12 @@ export default function AddJob() {
             checked={existing.enabled}
             onChange={() => useJobsStore.getState().toggleEnabled(existing.id)}
           />
+        )}
+
+        {isEditing && existing && (
+          <Field label="Runs">
+            <JobRunCalendar jobId={existing.id} />
+          </Field>
         )}
 
         {sqlConnections.length > 0 && (

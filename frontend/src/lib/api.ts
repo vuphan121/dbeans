@@ -3,6 +3,7 @@ import type {
   ConnectionSchema,
   ConnectionStatus,
   JobRun,
+  JobRunCalendarDay,
   QueryResult,
   SavedConnection,
   ScheduledJob,
@@ -155,12 +156,22 @@ export function deleteJob(token: string, id: string): Promise<{ ok: boolean }> {
   return request(`/api/jobs/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
 }
 
-export function runJobNow(token: string, id: string): Promise<JobRun> {
-  return request(`/api/jobs/${id}/run`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+// date, if given (YYYY-MM-DD), backfills the job for that logical date
+// instead of running it for today.
+export function runJobNow(token: string, id: string, date?: string): Promise<JobRun> {
+  return request(`/api/jobs/${id}/run`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(date ? { date } : {}),
+  });
 }
 
 export function listJobRuns(token: string, id: string): Promise<JobRun[]> {
   return request(`/api/jobs/${id}/runs`, { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export function getJobRunCalendar(token: string, id: string, days = 60): Promise<JobRunCalendarDay[]> {
+  return request(`/api/jobs/${id}/runs/calendar?days=${days}`, { headers: { Authorization: `Bearer ${token}` } });
 }
 
 export interface JobsTickInfo {

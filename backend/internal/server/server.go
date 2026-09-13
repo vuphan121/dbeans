@@ -102,6 +102,7 @@ func New(ctx context.Context) (http.Handler, *pgxpool.Pool, error) {
 	r.Delete("/api/jobs/{id}", s.DeleteJob)
 	r.Post("/api/jobs/{id}/run", s.RunJobNow)
 	r.Get("/api/jobs/{id}/runs", s.ListJobRuns)
+	r.Get("/api/jobs/{id}/runs/calendar", s.JobRunCalendar)
 	r.Get("/api/jobs/tick", s.JobsTick)
 	r.Get("/api/jobs/tick-info", s.JobsTickInfo)
 

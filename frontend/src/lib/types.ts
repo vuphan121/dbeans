@@ -127,8 +127,15 @@ export interface JobRun {
   attempts: number;
   rowsAffected?: number;
   error?: string;
-  triggeredBy: "tick" | "manual";
+  triggeredBy: "tick" | "manual" | "backfill";
+  runDate: string; // "YYYY-MM-DD" — the logical date this run represents
   startedAt: string;
   finishedAt?: string;
   durationMs?: number;
+}
+
+export interface JobRunCalendarDay {
+  date: string; // "YYYY-MM-DD"
+  status: "success" | "failed" | "blocked";
+  runCount: number;
 }

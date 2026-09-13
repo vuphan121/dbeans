@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { NodeResizer, type NodeProps } from "@xyflow/react";
-import { Loader2, Clock, GitBranch } from "lucide-react";
+import { Clock, GitBranch } from "lucide-react";
 import { EngineTag } from "@/components/ui/Badge";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/ContextMenu";
 import { useJobsStore } from "@/state/jobs";
@@ -15,23 +15,10 @@ export function JobCard({ data, selected }: NodeProps) {
   const jobId = (data as { jobId: string }).jobId;
   const job = useJobsStore((s) => s.jobs.find((j) => j.id === jobId));
   const connection = useConnectionsStore((s) => s.connections.find((c) => c.id === job?.connectionId));
-  const { removeJob, toggleEnabled, updateLayout, runNow } = useJobsStore();
+  const { removeJob, toggleEnabled, updateLayout } = useJobsStore();
   const [hovered, setHovered] = useState(false);
-  const [running, setRunning] = useState(false);
 
   if (!job) return null;
-
-  async function handleRunNow() {
-    markContextMenuAction();
-    setRunning(true);
-    try {
-      await runNow(job!.id);
-    } catch {
-      /* status already reflected via lastStatus if the request completed */
-    } finally {
-      setRunning(false);
-    }
-  }
 
   return (
     <div className="h-full w-full" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
@@ -92,13 +79,6 @@ export function JobCard({ data, selected }: NodeProps) {
               <span>{statusLabel(job)}</span>
               {!job.enabled && <span className="ml-auto rounded-[4px] bg-bg-hover px-1.5 py-0.5 text-[10px]">paused</span>}
             </div>
-
-            {running && (
-              <div className="absolute inset-0 flex items-center justify-center gap-2 rounded-[10px] bg-bg-surface/90 backdrop-blur-[1px]">
-                <Loader2 size={14} className="animate-spin text-text-tertiary" />
-                <span className="text-[12px] text-text-secondary">Running…</span>
-              </div>
-            )}
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent>
@@ -110,7 +90,6 @@ export function JobCard({ data, selected }: NodeProps) {
           >
             Edit
           </ContextMenuItem>
-          <ContextMenuItem onClick={handleRunNow}>Run now</ContextMenuItem>
           <ContextMenuItem
             onClick={() => {
               markContextMenuAction();

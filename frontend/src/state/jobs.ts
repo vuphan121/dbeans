@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { CardLayout, CheckMode, ScheduledJob } from "@/lib/types";
+import type { CardLayout, CheckMode, JobRun, ScheduledJob } from "@/lib/types";
 import { useAuthStore } from "@/state/auth";
 import { FIELD_CENTER, GRID_UNIT, snapToGrid } from "@/lib/canvasBounds";
 import * as api from "@/lib/api";
@@ -48,7 +48,8 @@ interface JobsState {
   removeJob: (id: string) => void;
   toggleEnabled: (id: string) => void;
   updateLayout: (id: string, layout: CardLayout) => void;
-  runNow: (id: string) => Promise<void>;
+  // date backfills that logical date instead of running for today.
+  runNow: (id: string, date?: string) => Promise<JobRun>;
 }
 
 export const useJobsStore = create<JobsState>()((set, get) => ({
@@ -111,14 +112,15 @@ export const useJobsStore = create<JobsState>()((set, get) => ({
     if (token) api.updateJobLayout(token, id, layout).catch(() => {});
   },
 
-  runNow: async (id) => {
+  runNow: async (id, date) => {
     const token = useAuthStore.getState().token;
-    if (!token) return;
-    const run = await api.runJobNow(token, id);
+    if (!token) throw new Error("not signed in");
+    const run = await api.runJobNow(token, id, date);
     set((s) => ({
       jobs: s.jobs.map((j) =>
         j.id === id ? { ...j, lastStatus: run.status, lastRunAt: run.finishedAt ?? j.lastRunAt } : j,
       ),
     }));
+    return run;
   },
 }));

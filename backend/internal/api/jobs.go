@@ -289,7 +289,8 @@ type JobRun struct {
 	Attempts     int        `json:"attempts"`
 	RowsAffected *int       `json:"rowsAffected,omitempty"`
 	Error        *string    `json:"error,omitempty"`
-	TriggeredBy  string     `json:"triggeredBy"`
+	TriggeredBy  string     `json:"triggeredBy"` // "tick" | "manual" | "backfill"
+	RunDate      string     `json:"runDate"`     // "2006-01-02" — the logical date this run represents
 	StartedAt    time.Time  `json:"startedAt"`
 	FinishedAt   *time.Time `json:"finishedAt,omitempty"`
 	DurationMs   *int64     `json:"durationMs,omitempty"`
@@ -310,7 +311,7 @@ func (s *Server) ListJobRuns(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := s.Pool.Query(r.Context(), `
-		SELECT id, job_id, status, attempts, rows_affected, error, triggered_by, started_at, finished_at, duration_ms
+		SELECT id, job_id, status, attempts, rows_affected, error, triggered_by, run_date, started_at, finished_at, duration_ms
 		FROM job_runs WHERE job_id = $1 ORDER BY started_at DESC LIMIT 50`, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list job runs")
@@ -321,18 +322,93 @@ func (s *Server) ListJobRuns(w http.ResponseWriter, r *http.Request) {
 	runs := []JobRun{}
 	for rows.Next() {
 		var jr JobRun
-		if err := rows.Scan(&jr.ID, &jr.JobID, &jr.Status, &jr.Attempts, &jr.RowsAffected, &jr.Error, &jr.TriggeredBy, &jr.StartedAt, &jr.FinishedAt, &jr.DurationMs); err != nil {
+		var runDate time.Time
+		if err := rows.Scan(&jr.ID, &jr.JobID, &jr.Status, &jr.Attempts, &jr.RowsAffected, &jr.Error, &jr.TriggeredBy, &runDate, &jr.StartedAt, &jr.FinishedAt, &jr.DurationMs); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to read job runs")
 			return
 		}
+		jr.RunDate = runDate.Format("2006-01-02")
 		runs = append(runs, jr)
 	}
 	writeJSON(w, http.StatusOK, runs)
 }
 
+// dateOnlyLayout is used for both parsing the backfill request's date and
+// formatting run_date in responses — kept as one constant so the two never
+// drift apart.
+const dateOnlyLayout = "2006-01-02"
+
+// JobRunCalendarDay summarizes every run recorded for one logical date, for
+// rendering an Airflow/Dagster-style calendar of which dates succeeded,
+// failed, or haven't run at all.
+type JobRunCalendarDay struct {
+	Date     string `json:"date"`
+	Status   string `json:"status"` // latest run's status for that date
+	RunCount int    `json:"runCount"`
+}
+
+// JobRunCalendar returns one summary row per distinct run_date over the
+// requested window (default 60 days), so the frontend doesn't need to fetch
+// and group potentially thousands of individual runs for a frequently
+// scheduled job just to render a calendar.
+func (s *Server) JobRunCalendar(w http.ResponseWriter, r *http.Request) {
+	user, err := auth.Resolve(r.Context(), s.Pool, bearerToken(r))
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+	id := chi.URLParam(r, "id")
+
+	var owner string
+	if err := s.Pool.QueryRow(r.Context(), `SELECT id FROM jobs WHERE id = $1 AND user_id = $2`, id, user.ID).Scan(&owner); err != nil {
+		writeError(w, http.StatusNotFound, "job not found")
+		return
+	}
+
+	days := 60
+	if d := r.URL.Query().Get("days"); d != "" {
+		if n, err := strconv.Atoi(d); err == nil {
+			days = clampInt(n, 1, 365)
+		}
+	}
+	since := time.Now().UTC().AddDate(0, 0, -days)
+
+	rows, err := s.Pool.Query(r.Context(), `
+		SELECT run_date, (array_agg(status ORDER BY started_at DESC))[1] AS latest_status, count(*)
+		FROM job_runs
+		WHERE job_id = $1 AND run_date >= $2
+		GROUP BY run_date
+		ORDER BY run_date`, id, since)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load run calendar")
+		return
+	}
+	defer rows.Close()
+
+	results := []JobRunCalendarDay{}
+	for rows.Next() {
+		var runDate time.Time
+		var day JobRunCalendarDay
+		if err := rows.Scan(&runDate, &day.Status, &day.RunCount); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to read run calendar")
+			return
+		}
+		day.Date = runDate.Format(dateOnlyLayout)
+		results = append(results, day)
+	}
+	writeJSON(w, http.StatusOK, results)
+}
+
+type runJobNowRequest struct {
+	// Date, if given, backfills the job for that logical date instead of
+	// today — {{date}} etc. in the SQL resolve to this instead of "now".
+	Date string `json:"date,omitempty"`
+}
+
 // RunJobNow executes a job immediately, outside its schedule — used by the
-// "Run now" action in the UI. Still goes through the same dependency/retry/
-// check pipeline as a scheduled tick.
+// "Run now" and "Backfill" actions in the UI (an empty/omitted body runs for
+// today; a "date" backfills that specific date instead). Still goes through
+// the same dependency/retry/check pipeline as a scheduled tick.
 func (s *Server) RunJobNow(w http.ResponseWriter, r *http.Request) {
 	user, err := auth.Resolve(r.Context(), s.Pool, bearerToken(r))
 	if err != nil {
@@ -349,16 +425,33 @@ func (s *Server) RunJobNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run := s.executeJob(r.Context(), user.ID, j, "manual")
+	var req runJobNowRequest
+	_ = json.NewDecoder(r.Body).Decode(&req) // empty body is valid — plain "run now"
+
+	runDate := time.Now().UTC()
+	triggeredBy := "manual"
+	if req.Date != "" {
+		parsed, err := time.Parse(dateOnlyLayout, req.Date)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "date must be YYYY-MM-DD")
+			return
+		}
+		runDate = parsed
+		triggeredBy = "backfill"
+	}
+
+	run := s.executeJob(r.Context(), user.ID, j, triggeredBy, runDate)
 	writeJSON(w, http.StatusOK, run)
 }
 
 // executeJob runs one job through dependency checking, retries, and the
 // post-run check, records a job_runs row, and updates the job's schedule
-// bookkeeping. Shared by the manual "Run now" action and the tick endpoint.
-func (s *Server) executeJob(ctx context.Context, userID int64, j Job, triggeredBy string) JobRun {
+// bookkeeping. Shared by the tick endpoint and "Run now"/"Backfill" actions.
+// runDate is the logical date {{date}} etc. resolve to — "now" for a normal
+// run, or a past/future date for a backfill.
+func (s *Server) executeJob(ctx context.Context, userID int64, j Job, triggeredBy string, runDate time.Time) JobRun {
 	started := time.Now()
-	run := JobRun{JobID: j.ID, TriggeredBy: triggeredBy, StartedAt: started, Attempts: 0}
+	run := JobRun{JobID: j.ID, TriggeredBy: triggeredBy, RunDate: runDate.Format(dateOnlyLayout), StartedAt: started, Attempts: 0}
 
 	blocked := false
 	for _, depID := range j.DependsOn {
@@ -379,7 +472,7 @@ func (s *Server) executeJob(ctx context.Context, userID int64, j Job, triggeredB
 		var lastErr error
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
 			run.Attempts = attempt
-			rowCount, execErr := s.executeJobQuery(ctx, userID, j)
+			rowCount, execErr := s.executeJobQuery(ctx, userID, j, runDate)
 			if execErr == nil {
 				if j.CheckMode == "fail_if_no_rows" && rowCount == 0 {
 					execErr = errCheckFailed("check failed: expected at least one row, got 0")
@@ -422,9 +515,9 @@ func (s *Server) executeJob(ctx context.Context, userID int64, j Job, triggeredB
 	}
 
 	err := s.Pool.QueryRow(ctx, `
-		INSERT INTO job_runs (job_id, status, attempts, rows_affected, error, triggered_by, started_at, finished_at, duration_ms)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-		run.JobID, run.Status, run.Attempts, run.RowsAffected, run.Error, run.TriggeredBy, run.StartedAt, run.FinishedAt, run.DurationMs,
+		INSERT INTO job_runs (job_id, status, attempts, rows_affected, error, triggered_by, run_date, started_at, finished_at, duration_ms)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+		run.JobID, run.Status, run.Attempts, run.RowsAffected, run.Error, run.TriggeredBy, runDate, run.StartedAt, run.FinishedAt, run.DurationMs,
 	).Scan(&run.ID)
 	if err != nil {
 		run.Error = ptrString("run executed but failed to record history: " + err.Error())
@@ -467,7 +560,7 @@ func renderJobTemplate(sql string, now time.Time) string {
 	})
 }
 
-func (s *Server) executeJobQuery(ctx context.Context, userID int64, j Job) (int, error) {
+func (s *Server) executeJobQuery(ctx context.Context, userID int64, j Job, runDate time.Time) (int, error) {
 	engine, fields, err := s.loadTargetConnection(ctx, userID, j.ConnectionID)
 	if err != nil {
 		return 0, err
@@ -481,7 +574,7 @@ func (s *Server) executeJobQuery(ctx context.Context, userID int64, j Job) (int,
 	runCtx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	rows, err := conn.Query(runCtx, renderJobTemplate(j.SQL, time.Now()))
+	rows, err := conn.Query(runCtx, renderJobTemplate(j.SQL, runDate))
 	if err != nil {
 		return 0, err
 	}
@@ -573,9 +666,10 @@ func (s *Server) JobsTick(w http.ResponseWriter, r *http.Request) {
 		Name   string `json:"name"`
 		Status string `json:"status"`
 	}
+	now := time.Now().UTC()
 	results := make([]tickResult, 0, len(due))
 	for _, d := range due {
-		run := s.executeJob(r.Context(), d.userID, d.job, "tick")
+		run := s.executeJob(r.Context(), d.userID, d.job, "tick", now)
 		results = append(results, tickResult{JobID: d.job.ID, Name: d.job.Name, Status: run.Status})
 	}
 

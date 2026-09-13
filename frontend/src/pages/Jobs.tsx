@@ -8,6 +8,8 @@ import {
   Controls,
   Panel,
   applyNodeChanges,
+  MarkerType,
+  type Edge,
   type Node,
   type NodeChange,
   type ReactFlowInstance,
@@ -75,6 +77,27 @@ export default function Jobs() {
     () => (matchesQuery ? nodes.filter((n) => matchesQuery.has(n.id)) : nodes),
     [nodes, matchesQuery],
   );
+
+  // One arrow per dependency, drawn from the dependency job to the job that
+  // depends on it, so the canvas doubles as a DAG view of the pipeline.
+  const edges = useMemo<Edge[]>(() => {
+    const visibleIds = new Set(visibleNodes.map((n) => n.id));
+    const result: Edge[] = [];
+    for (const job of jobs) {
+      if (!visibleIds.has(job.id)) continue;
+      for (const depId of job.dependsOn) {
+        if (!visibleIds.has(depId)) continue;
+        result.push({
+          id: `${depId}->${job.id}`,
+          source: depId,
+          target: job.id,
+          markerEnd: { type: MarkerType.ArrowClosed, color: "var(--color-text-faint)" },
+          style: { stroke: "var(--color-text-faint)" },
+        });
+      }
+    }
+    return result;
+  }, [jobs, visibleNodes]);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     const snapped = changes.map((c) => {
@@ -160,7 +183,7 @@ export default function Jobs() {
         <ReactFlowProvider>
           <ReactFlow
             nodes={visibleNodes}
-            edges={[]}
+            edges={edges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
             onNodeDragStop={onNodeDragStop}

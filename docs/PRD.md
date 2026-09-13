@@ -78,7 +78,9 @@ One person: the developer running this for their own side projects, home lab, or
 - A job = a saved SQL query, a connection to run it against, and a cron schedule, with optional dependencies on other jobs, a retry policy, and a post-run check against the query's own result (fail if it returns/doesn't return rows) — a simple orchestrator, not just a cron trigger.
 - Deployment target is Vercel, which has no persistent scheduler — jobs are triggered by an external service ([cron-job.org](https://cron-job.org)) hitting one shared, secret-gated endpoint (`GET /api/jobs/tick`) on a fixed interval (15 minutes minimum in practice); dbeans itself decides what's due each tick and runs it. The user configures **one** external cron entry total, not one per job — see ARCHITECTURE.md §6. The exact tick URL (with secret) is shown in Settings.
 - Job SQL supports `{{date}}` / `{{date-1}}` / `{{date+N}}` / `{{datetime}}` placeholders, substituted (UTC) right before each run.
-- Own canvas UI (`/jobs`), mirroring the connections board — a card per job, create/edit/run-now/pause/delete from there.
+- Own canvas UI (`/jobs`), mirroring the connections board — a card per job, create/edit/pause/delete from there. Dependency arrows between jobs are drawn automatically on the canvas from each job's configured dependencies (no manual arrow-drawing).
+- "Depends on" is a searchable, multi-select dropdown over the other jobs (not a fixed checkbox list), so it stays usable as the number of jobs grows.
+- Running a job on demand (today or a backfill for a past/future logical date) and reviewing run history happens from the job's edit panel, via a Dagster/Airflow-style calendar of the last ~9 weeks (colored by that date's latest run status) plus a recent-runs list — not from the canvas card's context menu, which only has Edit/Pause/Remove.
 - **Built and executing for real** against Postgres connections (not stubbed) — MySQL/SQLite connections can be attached to a job but fail at run time until those drivers are wired up (see ARCHITECTURE.md §2).
 
 ## 6. Explicitly deferred (possible future phases)

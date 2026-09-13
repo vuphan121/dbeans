@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { NodeResizer, type NodeProps } from "@xyflow/react";
+import { Handle, NodeResizer, Position, type NodeProps } from "@xyflow/react";
 import { Clock, GitBranch } from "lucide-react";
 import { EngineTag } from "@/components/ui/Badge";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/ContextMenu";
@@ -22,6 +22,9 @@ export function JobCard({ data, selected }: NodeProps) {
 
   return (
     <div className="h-full w-full" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)}>
+      {/* Dependency arrows attach here — not user-draggable, since deps are edited via the "Depends on" picker */}
+      <Handle type="target" position={Position.Left} isConnectable={false} className="!border-0 !bg-transparent" />
+      <Handle type="source" position={Position.Right} isConnectable={false} className="!border-0 !bg-transparent" />
       <NodeResizer
         minWidth={240}
         minHeight={120}

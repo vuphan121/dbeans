@@ -14,6 +14,7 @@ import { runQuery, ApiError } from "@/lib/api";
 import { SQL_ENGINES, type CheckMode } from "@/lib/types";
 import { SqlEditor } from "@/components/workbench/SqlEditor";
 import { JobRunCalendar } from "@/components/jobs/JobRunCalendar";
+import { DependsOnPicker } from "@/components/jobs/DependsOnPicker";
 import { renderJobTemplate } from "@/lib/jobTemplate";
 
 const CRON_PRESETS = [
@@ -155,22 +156,6 @@ export default function AddJob() {
               connectionId={connectionId}
             />
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-text-quiet">
-            <span>Supports date placeholders, filled in right before each run (UTC) — add ±N days like {"{{date-1}}"}:</span>
-            {["{{date}}", "{{date-1}}", "{{date+7}}", "{{datetime}}"].map((v) => (
-              <span
-                key={v}
-                style={
-                  resolvedTheme === "dark"
-                    ? { color: "#d7b8f3", backgroundColor: "rgba(199,146,234,0.14)" }
-                    : { color: "#7c3aed", backgroundColor: "rgba(124,58,237,0.09)" }
-                }
-                className="rounded-[4px] px-1.5 py-0.5 font-mono text-[10.5px] font-semibold"
-              >
-                {v}
-              </span>
-            ))}
-          </div>
         </Field>
 
         <div className="flex items-center justify-between">
@@ -200,35 +185,16 @@ export default function AddJob() {
                 </button>
               ))}
             </div>
-            <div className="text-[11px] text-text-quiet">
-              Standard 5-field cron. Runs are only actually checked when your external trigger (cron-job.org) hits the
-              tick endpoint — every 15 minutes minimum, so schedules finer than that won't run any more often.
-            </div>
           </div>
         </Field>
 
         {otherJobs.length > 0 && (
           <Field label="Depends on">
-            <div className="flex flex-col gap-1 rounded-[8px] border border-border-default p-2">
-              {otherJobs.map((j) => (
-                <label
-                  key={j.id}
-                  className="flex cursor-pointer items-center gap-2.5 rounded-[5px] px-2 py-1.5 hover:bg-bg-hover"
-                >
-                  <input
-                    type="checkbox"
-                    checked={dependsOn.includes(j.id)}
-                    onChange={() => toggleDependency(j.id)}
-                    className="h-3.5 w-3.5 accent-inverse-bg"
-                  />
-                  <span className="text-[12px] text-text-secondary">{j.name}</span>
-                </label>
-              ))}
-            </div>
-            <div className="mt-1 text-[11px] text-text-quiet">
-              This job only runs if every dependency's most recent run succeeded — otherwise it's skipped for that
-              cycle (recorded as "blocked").
-            </div>
+            <DependsOnPicker
+              jobs={otherJobs.map((j) => ({ id: j.id, name: j.name }))}
+              selected={dependsOn}
+              onToggle={toggleDependency}
+            />
           </Field>
         )}
 
@@ -248,7 +214,6 @@ export default function AddJob() {
         {isEditing && existing && (
           <ToggleRow
             title="Enabled"
-            subtitle="Paused jobs are skipped by every tick until resumed."
             checked={existing.enabled}
             onChange={() => useJobsStore.getState().toggleEnabled(existing.id)}
           />
@@ -298,7 +263,7 @@ function ToggleRow({
   onChange,
 }: {
   title: string;
-  subtitle: string;
+  subtitle?: string;
   checked: boolean;
   onChange: (v: boolean) => void;
 }) {
@@ -306,7 +271,7 @@ function ToggleRow({
     <div className="flex items-center justify-between">
       <div className="flex flex-col gap-0.5">
         <div className="text-[12.5px] font-medium text-text-primary">{title}</div>
-        <div className="text-[11px] text-text-faint">{subtitle}</div>
+        {subtitle && <div className="text-[11px] text-text-faint">{subtitle}</div>}
       </div>
       <Switch checked={checked} onCheckedChange={onChange} />
     </div>

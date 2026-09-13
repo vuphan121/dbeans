@@ -57,8 +57,8 @@ export const useAuthStore = create<AuthState>()(
               error: "Too many attempts",
             });
           } else {
-            const msg = e instanceof ApiError ? e.message : "Could not reach dbeans server";
-            set({ attemptsRemaining: remaining, error: `${msg} — ${remaining} attempt${remaining === 1 ? "" : "s"} left` });
+            const msg = e instanceof ApiError ? "Username or password didn't match" : "Could not reach dbeans server";
+            set({ attemptsRemaining: remaining, error: msg });
           }
           return false;
         }

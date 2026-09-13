@@ -109,7 +109,7 @@ export default function Login() {
           </Button>
         </div>
 
-        {isLocked ? (
+        {isLocked && (
           <div className="flex w-full flex-col gap-1.5 rounded-[8px] border border-border-default bg-bg-inset px-3.5 py-3">
             <div className="flex items-center justify-between">
               <span className="text-[12px] font-medium text-text-primary">Too many attempts</span>
@@ -127,8 +127,6 @@ export default function Login() {
               />
             </div>
           </div>
-        ) : (
-          <div className="text-[11px] text-text-quiet">Your credentials stay on your dbeans server</div>
         )}
       </form>
     </div>

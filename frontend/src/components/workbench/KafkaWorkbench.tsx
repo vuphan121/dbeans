@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { WorkbenchShell } from "./WorkbenchShell";
 import { TopicBrowser } from "./kafka/TopicBrowser";
 import { MessagesPane } from "./kafka/MessagesPane";
@@ -5,6 +6,7 @@ import { ProducePane } from "./kafka/ProducePane";
 import { useKafkaStore } from "@/state/kafka";
 import { cn } from "@/lib/utils";
 import type { SavedConnection } from "@/lib/types";
+import { useAuthStore } from "@/state/auth";
 
 export function KafkaWorkbench({
   connection,
@@ -13,8 +15,19 @@ export function KafkaWorkbench({
   connection: SavedConnection;
   onOpenPalette: () => void;
 }) {
-  const { selectedTopic, messages, activeTab, setActiveTab, liveTail, toggleLiveTail, produce } = useKafkaStore();
+  const { selectedTopic, messages, activeTab, setActiveTab, liveTail, toggleLiveTail, produce, load, refreshMessages, loading, error } = useKafkaStore();
+  const token = useAuthStore((state) => state.token);
   const topicMessages = selectedTopic ? (messages[selectedTopic] ?? []) : [];
+
+  useEffect(() => {
+    if (token) void load(token, connection.id);
+  }, [connection.id, load, token]);
+
+  useEffect(() => {
+    if (!liveTail || !selectedTopic) return;
+    const timer = window.setInterval(() => void refreshMessages(), 3000);
+    return () => window.clearInterval(timer);
+  }, [liveTail, refreshMessages, selectedTopic]);
 
   return (
     <WorkbenchShell
@@ -24,10 +37,14 @@ export function KafkaWorkbench({
         <div className="flex items-center gap-2 px-3.5 text-[12.5px] text-text-muted">
           <span className="font-mono text-[11px] text-text-faint">Kafka</span>
           <span className="text-text-secondary">{connection.name}</span>
+          {loading && <span>Loading topics…</span>}
+          {error && <span className="truncate text-error-dim" title={error}>{error}</span>}
         </div>
       }
     >
-      {selectedTopic ? (
+      {loading ? (
+        <div className="flex flex-1 items-center justify-center text-[13px] text-text-faint">Connecting to Kafka…</div>
+      ) : selectedTopic ? (
         <>
           <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border-faint px-3">
             <TabButton active={activeTab === "messages"} onClick={() => setActiveTab("messages")}>

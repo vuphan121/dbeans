@@ -4,7 +4,10 @@ import type {
   ConnectionStatus,
   JobRun,
   JobRunCalendarDay,
+  KafkaMessage,
+  KafkaTopic,
   QueryResult,
+  RedisKeyEntry,
   SavedConnection,
   ScheduledJob,
 } from "@/lib/types";
@@ -121,6 +124,66 @@ export function runQuery(token: string, id: string, sql: string): Promise<QueryR
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify({ sql }),
+  });
+}
+
+export function listRedisKeys(token: string, id: string, pattern = "*"): Promise<RedisKeyEntry[]> {
+  return request(`/api/connections/${id}/redis/keys?pattern=${encodeURIComponent(pattern)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export function createRedisKey(token: string, id: string, entry: RedisKeyEntry): Promise<RedisKeyEntry> {
+  return request(`/api/connections/${id}/redis/keys`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(entry),
+  });
+}
+
+export function updateRedisKey(token: string, id: string, entry: RedisKeyEntry): Promise<RedisKeyEntry> {
+  return request(`/api/connections/${id}/redis/keys`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(entry),
+  });
+}
+
+export function updateRedisTTL(token: string, id: string, key: string, ttl: number | null): Promise<{ ok: boolean }> {
+  return request(`/api/connections/${id}/redis/keys/ttl`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ key, ttl }),
+  });
+}
+
+export function deleteRedisKey(token: string, id: string, key: string): Promise<{ ok: boolean }> {
+  return request(`/api/connections/${id}/redis/keys?key=${encodeURIComponent(key)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export function listKafkaTopics(token: string, id: string): Promise<KafkaTopic[]> {
+  return request(`/api/connections/${id}/kafka/topics`, { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export function listKafkaMessages(token: string, id: string, topic: string): Promise<KafkaMessage[]> {
+  return request(`/api/connections/${id}/kafka/messages?topic=${encodeURIComponent(topic)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export function produceKafkaMessage(
+  token: string,
+  id: string,
+  topic: string,
+  message: Omit<KafkaMessage, "offset" | "timestamp">,
+): Promise<{ ok: boolean }> {
+  return request(`/api/connections/${id}/kafka/messages`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ topic, ...message }),
   });
 }
 

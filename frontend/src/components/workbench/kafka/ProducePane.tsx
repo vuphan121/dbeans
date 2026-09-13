@@ -6,23 +6,31 @@ import { Input } from "@/components/ui/Input";
 export function ProducePane({
   onSend,
 }: {
-  onSend: (msg: { partition: number; key: string | null; value: string; headers: Record<string, string> }) => void;
+  onSend: (msg: { partition: number; key: string | null; value: string; headers: Record<string, string> }) => Promise<void>;
 }) {
   const [partition, setPartition] = useState("0");
   const [key, setKey] = useState("");
   const [value, setValue] = useState('{\n  \n}');
   const [headers, setHeaders] = useState<[string, string][]>([["content-type", "application/json"]]);
   const [sent, setSent] = useState(false);
+  const [sending, setSending] = useState(false);
 
-  function handleSend() {
-    onSend({
-      partition: Number(partition) || 0,
-      key: key.trim() || null,
-      value,
-      headers: Object.fromEntries(headers.filter(([k]) => k.trim())),
-    });
-    setSent(true);
-    window.setTimeout(() => setSent(false), 1800);
+  async function handleSend() {
+    setSending(true);
+    try {
+      await onSend({
+        partition: Number(partition) || 0,
+        key: key.trim() || null,
+        value,
+        headers: Object.fromEntries(headers.filter(([k]) => k.trim())),
+      });
+      setSent(true);
+      window.setTimeout(() => setSent(false), 1800);
+    } catch {
+      // The workbench header displays the API error.
+    } finally {
+      setSending(false);
+    }
   }
 
   return (
@@ -89,8 +97,8 @@ export function ProducePane({
       </Field>
 
       <div className="mt-1 flex items-center gap-3">
-        <Button variant="primary" size="md" onClick={handleSend}>
-          <Send size={12} /> Send
+        <Button variant="primary" size="md" disabled={sending} onClick={() => void handleSend()}>
+          <Send size={12} /> {sending ? "Sending…" : "Send"}
         </Button>
         {sent && <span className="text-[12px] text-success-text">Message produced</span>}
       </div>

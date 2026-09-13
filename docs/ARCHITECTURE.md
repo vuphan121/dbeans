@@ -14,8 +14,8 @@ Go backend
  │            query execution, scheduled jobs + tick endpoint)
  ├─ Driver abstraction layer
  │    ├─ database/sql compatible ── pgx (PostgreSQL, real — see §2) · go-sql-driver (MySQL/MariaDB, planned) · modernc sqlite (SQLite, planned)
- │    ├─ go-redis                 (Redis: key browse/edit)
- │    └─ segmentio/kafka-go       (Kafka: topic/message browse + produce)
+ │    ├─ go-redis                 (Redis: real key browse/edit + TTL operations)
+ │    └─ segmentio/kafka-go       (Kafka: real topic/message browse + produce)
  └─ Operator DB (Postgres, e.g. Neon) — DATABASE_URL from env
       - users, sessions               (real auth, not a demo)
       - analytics_events              (sign-ins, query runs, ...)
@@ -30,6 +30,7 @@ Go backend
 ## 2. Backend (Go)
 
 - **Language/runtime:** Go, compiled to a single static binary.
+- **Redis and Kafka:** real authenticated clients are wired through connection-scoped API routes. Redis supports TLS, logical database selection, SCAN-based key discovery, string/hash/list/set/zset editing, TTL changes, create and delete. Kafka supports multiple brokers, TLS, SASL/PLAIN, topic metadata, bounded recent-message reads, producing to a selected partition, and polling-based live tail. Both deliberately cap browser payloads (500 Redis keys/members and 100 Kafka messages).
 - **HTTP framework:** `chi` (`github.com/go-chi/chi/v5`) — no need for a heavier framework given the API surface is modest.
 - **Driver abstraction (partially built):** the original plan is a `database/sql`-based abstraction shared across Postgres/MySQL/SQLite. **Current state:** only Postgres is wired up, directly via `pgx` (`backend/internal/api/query.go`), not yet behind a generic `Driver` interface — `GetConnectionSchema` introspects `information_schema` for tables/columns/views plus primary/foreign keys (the latter feeds the frontend's ERD view), `RunConnectionQuery` executes arbitrary SQL and returns up to 1000 rows (decoded via Postgres' text wire format so every cell is a plain string, avoiding pgtype-decoding edge cases). MySQL/SQLite connections can be created and pinged but fail at query/schema time with an explicit "not wired up yet" error rather than silently returning nothing. **Not yet built:** query cancellation, server-side pagination/streaming for very large result sets (the 1000-row cap is a blunt stand-in), and identifier-quoting for generated `UPDATE` statements (inline cell editing itself isn't built either).
 - Generalizing today's Postgres-only code into a real multi-engine `Driver` interface is the extension point for adding MySQL/SQLite/MSSQL etc. without touching the API or frontend contracts.

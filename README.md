@@ -19,6 +19,6 @@ Working app: real accounts, connections, schema browsing + SQL execution (Postgr
 
 - **Backend:** Go — runs either as a plain binary (local dev, any traditional host) or as a Vercel Go serverless function, same code either way
 - **Frontend:** React + TypeScript (Vite)
-- **Databases supported:** PostgreSQL (real schema browsing + query execution); MySQL/MariaDB and SQLite connections can be saved but don't execute yet
+- **Sources supported:** PostgreSQL (schema browsing + query execution), Redis (key browsing and CRUD), and Kafka (topic/message browsing + producing) are live; MySQL/MariaDB and SQLite connections can be saved but don't execute yet
 - **Auth:** real username/password accounts (bcrypt + Postgres), seeded server-side — this is a personal tool, not multi-tenant
 - **Deployment:** two Vercel projects (frontend + backend), or the backend on any traditional host (Railway/Fly.io/a VPS) with just the frontend on Vercel — see [Deployment](docs/DEPLOYMENT.md)

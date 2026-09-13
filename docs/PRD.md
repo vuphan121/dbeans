@@ -66,7 +66,8 @@ One person: the developer running this for their own side projects, home lab, or
 
 ### ERD / relationship diagram
 - A third view alongside Query and Graphs — one card per table (name, columns, primary/foreign key markers) and an arrow per foreign key, introspected live from the connection's own `information_schema` (real constraints, not inferred from column-naming conventions).
-- Auto-laid-out by dependency depth (a table nothing else points at sits leftmost; anything referencing it sits one column to the right) so the diagram reads as an actual hierarchy instead of an arbitrary scatter — nodes stay draggable for the session but nothing about the layout is persisted, since it's a live snapshot of the schema, not a user-curated board like the connections/jobs canvases.
+- Auto-laid-out by dependency depth (a table nothing else points at sits leftmost; anything referencing it sits further right) so the diagram reads as an actual hierarchy instead of an arbitrary scatter — nodes stay draggable for the session but nothing about the layout is persisted, since it's a live snapshot of the schema, not a user-curated board like the connections/jobs canvases.
+- Handles a "hub" schema gracefully — a table referenced directly by most others (a `users` table every other table points at, say) doesn't produce one absurdly long column or a tangle of arrows funneling through a single point: long columns wrap into a grid, and each arrow attaches wherever it naturally lands on the two tables' borders rather than a fixed side (see ARCHITECTURE.md §3).
 - Reflects reality exactly: a connection whose tables have no real foreign keys defined (an app that never added them, or one built on convention over constraints) correctly shows a diagram with no relationship lines, rather than guessing relationships from naming.
 
 ### Results grid

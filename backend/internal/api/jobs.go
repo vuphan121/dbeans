@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -27,7 +30,9 @@ type Job struct {
 	ID                string          `json:"id"`
 	ConnectionID      string          `json:"connectionId"`
 	Name              string          `json:"name"`
+	JobType           string          `json:"jobType"`
 	SQL               string          `json:"sql"`
+	Config            json.RawMessage `json:"config"`
 	CronExpr          string          `json:"cronExpr"`
 	Enabled           bool            `json:"enabled"`
 	DependsOn         []string        `json:"dependsOn"`
@@ -46,7 +51,7 @@ func scanJob(row interface {
 	var j Job
 	var dependsOnJSON []byte
 	err := row.Scan(
-		&j.ID, &j.ConnectionID, &j.Name, &j.SQL, &j.CronExpr, &j.Enabled,
+		&j.ID, &j.ConnectionID, &j.Name, &j.JobType, &j.SQL, &j.Config, &j.CronExpr, &j.Enabled,
 		&dependsOnJSON, &j.RetryLimit, &j.RetryDelaySeconds, &j.CheckMode,
 		&j.Layout, &j.NextRunAt, &j.LastRunAt, &j.LastStatus,
 	)
@@ -58,7 +63,7 @@ func scanJob(row interface {
 	return j, nil
 }
 
-const jobColumns = `id, connection_id, name, sql, cron_expr, enabled, depends_on, retry_limit, retry_delay_seconds, check_mode, layout, next_run_at, last_run_at, last_status`
+const jobColumns = `id, COALESCE(connection_id, ''), name, job_type, COALESCE(sql, ''), config, cron_expr, enabled, depends_on, retry_limit, retry_delay_seconds, check_mode, layout, next_run_at, last_run_at, last_status`
 
 func (s *Server) ListJobs(w http.ResponseWriter, r *http.Request) {
 	user, err := auth.Resolve(r.Context(), s.Pool, bearerToken(r))
@@ -90,7 +95,9 @@ type jobRequest struct {
 	ID                string          `json:"id"`
 	ConnectionID      string          `json:"connectionId"`
 	Name              string          `json:"name"`
+	JobType           string          `json:"jobType"`
 	SQL               string          `json:"sql"`
+	Config            json.RawMessage `json:"config"`
 	CronExpr          string          `json:"cronExpr"`
 	Enabled           *bool           `json:"enabled"`
 	DependsOn         []string        `json:"dependsOn"`
@@ -110,6 +117,57 @@ func clampInt(v, min, max int) int {
 	return v
 }
 
+type httpRequestJobConfig struct {
+	URL     string            `json:"url"`
+	Method  string            `json:"method"`
+	Headers map[string]string `json:"headers"`
+	Body    string            `json:"body"`
+}
+
+func normalizeJobRequest(req *jobRequest) error {
+	if req.JobType == "" {
+		req.JobType = "query"
+	}
+	switch req.JobType {
+	case "query":
+		if strings.TrimSpace(req.ConnectionID) == "" || strings.TrimSpace(req.SQL) == "" {
+			return errors.New("connectionId and sql are required for query jobs")
+		}
+		if len(req.Config) == 0 {
+			req.Config = json.RawMessage(`{}`)
+		}
+	case "http_request":
+		var config httpRequestJobConfig
+		if err := json.Unmarshal(req.Config, &config); err != nil {
+			return errors.New("invalid HTTP request configuration")
+		}
+		config.URL = strings.TrimSpace(config.URL)
+		parsed, err := url.Parse(config.URL)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return errors.New("HTTP request URL must be an absolute http or https URL")
+		}
+		config.Method = strings.ToUpper(strings.TrimSpace(config.Method))
+		if config.Method == "" {
+			config.Method = http.MethodPost
+		}
+		switch config.Method {
+		case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		default:
+			return errors.New("HTTP request method must be GET, POST, PUT, PATCH, or DELETE")
+		}
+		if config.Headers == nil {
+			config.Headers = map[string]string{}
+		}
+		req.Config, _ = json.Marshal(config)
+		req.ConnectionID = ""
+		req.SQL = ""
+		req.CheckMode = "none"
+	default:
+		return fmt.Errorf("unsupported job type %q", req.JobType)
+	}
+	return nil
+}
+
 func (s *Server) CreateJob(w http.ResponseWriter, r *http.Request) {
 	user, err := auth.Resolve(r.Context(), s.Pool, bearerToken(r))
 	if err != nil {
@@ -118,8 +176,12 @@ func (s *Server) CreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req jobRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" || req.Name == "" || req.SQL == "" || req.ConnectionID == "" {
-		writeError(w, http.StatusBadRequest, "id, name, connectionId and sql are required")
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" || strings.TrimSpace(req.Name) == "" {
+		writeError(w, http.StatusBadRequest, "id and name are required")
+		return
+	}
+	if err := normalizeJobRequest(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	schedule, err := cronParser.Parse(req.CronExpr)
@@ -128,10 +190,12 @@ func (s *Server) CreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var connOwner string
-	if err := s.Pool.QueryRow(r.Context(), `SELECT id FROM connections WHERE id = $1 AND user_id = $2`, req.ConnectionID, user.ID).Scan(&connOwner); err != nil {
-		writeError(w, http.StatusBadRequest, "connection not found")
-		return
+	if req.JobType == "query" {
+		var connOwner string
+		if err := s.Pool.QueryRow(r.Context(), `SELECT id FROM connections WHERE id = $1 AND user_id = $2`, req.ConnectionID, user.ID).Scan(&connOwner); err != nil {
+			writeError(w, http.StatusBadRequest, "connection not found")
+			return
+		}
 	}
 
 	enabled := true
@@ -159,16 +223,16 @@ func (s *Server) CreateJob(w http.ResponseWriter, r *http.Request) {
 	nextRunAt := schedule.Next(time.Now().UTC())
 
 	_, err = s.Pool.Exec(r.Context(), `
-		INSERT INTO jobs (id, user_id, connection_id, name, sql, cron_expr, enabled, depends_on, retry_limit, retry_delay_seconds, check_mode, layout, next_run_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-		req.ID, user.ID, req.ConnectionID, req.Name, req.SQL, req.CronExpr, enabled, dependsOnJSON, retryLimit, retryDelay, checkMode, req.Layout, nextRunAt)
+		INSERT INTO jobs (id, user_id, connection_id, name, job_type, sql, config, cron_expr, enabled, depends_on, retry_limit, retry_delay_seconds, check_mode, layout, next_run_at)
+		VALUES ($1, $2, NULLIF($3, ''), $4, $5, NULLIF($6, ''), $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+		req.ID, user.ID, req.ConnectionID, req.Name, req.JobType, req.SQL, req.Config, req.CronExpr, enabled, dependsOnJSON, retryLimit, retryDelay, checkMode, req.Layout, nextRunAt)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save job")
 		return
 	}
 
 	writeJSON(w, http.StatusCreated, Job{
-		ID: req.ID, ConnectionID: req.ConnectionID, Name: req.Name, SQL: req.SQL, CronExpr: req.CronExpr,
+		ID: req.ID, ConnectionID: req.ConnectionID, Name: req.Name, JobType: req.JobType, SQL: req.SQL, Config: req.Config, CronExpr: req.CronExpr,
 		Enabled: enabled, DependsOn: req.DependsOn, RetryLimit: retryLimit, RetryDelaySeconds: retryDelay,
 		CheckMode: checkMode, Layout: req.Layout, NextRunAt: &nextRunAt, LastStatus: "never_run",
 	})
@@ -187,8 +251,12 @@ func (s *Server) UpdateJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	if req.Name == "" || req.SQL == "" || req.ConnectionID == "" || req.CronExpr == "" {
-		writeError(w, http.StatusBadRequest, "name, connectionId, sql and cronExpr are required")
+	if strings.TrimSpace(req.Name) == "" || strings.TrimSpace(req.CronExpr) == "" {
+		writeError(w, http.StatusBadRequest, "name and cronExpr are required")
+		return
+	}
+	if err := normalizeJobRequest(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	schedule, err := cronParser.Parse(req.CronExpr)
@@ -196,10 +264,12 @@ func (s *Server) UpdateJob(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid cron expression: "+err.Error())
 		return
 	}
-	var connOwner string
-	if err := s.Pool.QueryRow(r.Context(), `SELECT id FROM connections WHERE id = $1 AND user_id = $2`, req.ConnectionID, user.ID).Scan(&connOwner); err != nil {
-		writeError(w, http.StatusBadRequest, "connection not found")
-		return
+	if req.JobType == "query" {
+		var connOwner string
+		if err := s.Pool.QueryRow(r.Context(), `SELECT id FROM connections WHERE id = $1 AND user_id = $2`, req.ConnectionID, user.ID).Scan(&connOwner); err != nil {
+			writeError(w, http.StatusBadRequest, "connection not found")
+			return
+		}
 	}
 
 	enabled := true
@@ -232,12 +302,12 @@ func (s *Server) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tag, err := s.Pool.Exec(r.Context(), `
-		UPDATE jobs SET connection_id = $1, name = $2, sql = $3, cron_expr = $4, enabled = $5,
-			depends_on = $6, retry_limit = $7, retry_delay_seconds = $8, check_mode = $9,
-			layout = $10, next_run_at = $11
-		WHERE id = $12 AND user_id = $13`,
-		req.ConnectionID, req.Name, req.SQL, req.CronExpr, enabled, dependsOnJSON, retryLimit, retryDelay, checkMode,
-		layout, nextRunAt, id, user.ID)
+		UPDATE jobs SET connection_id = NULLIF($1, ''), name = $2, job_type = $3, sql = NULLIF($4, ''), config = $5,
+			cron_expr = $6, enabled = $7, depends_on = $8, retry_limit = $9, retry_delay_seconds = $10,
+			check_mode = $11, layout = $12, next_run_at = $13
+		WHERE id = $14 AND user_id = $15`,
+		req.ConnectionID, req.Name, req.JobType, req.SQL, req.Config, req.CronExpr, enabled, dependsOnJSON,
+		retryLimit, retryDelay, checkMode, layout, nextRunAt, id, user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update job")
 		return
@@ -497,7 +567,7 @@ func (s *Server) executeJob(ctx context.Context, userID int64, j Job, triggeredB
 		var lastErr error
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
 			run.Attempts = attempt
-			rowCount, execErr := s.executeJobQuery(ctx, userID, j, runDate)
+			rowCount, execErr := s.executeJobAction(ctx, userID, j, runDate)
 			if execErr == nil {
 				if j.CheckMode == "fail_if_no_rows" && rowCount == 0 {
 					execErr = errCheckFailed("check failed: expected at least one row, got 0")
@@ -639,6 +709,17 @@ func renderJobTemplate(sql string, now time.Time) string {
 	})
 }
 
+func (s *Server) executeJobAction(ctx context.Context, userID int64, j Job, runDate time.Time) (int, error) {
+	switch j.JobType {
+	case "", "query":
+		return s.executeJobQuery(ctx, userID, j, runDate)
+	case "http_request":
+		return 0, executeHTTPRequestJob(ctx, j.Config, runDate)
+	default:
+		return 0, fmt.Errorf("unsupported job type %q", j.JobType)
+	}
+}
+
 func (s *Server) executeJobQuery(ctx context.Context, userID int64, j Job, runDate time.Time) (int, error) {
 	engine, fields, err := s.loadTargetConnection(ctx, userID, j.ConnectionID)
 	if err != nil {
@@ -670,6 +751,44 @@ func (s *Server) executeJobQuery(ctx context.Context, userID int64, j Job, runDa
 		rowCount = int(tag.RowsAffected())
 	}
 	return rowCount, nil
+}
+
+func executeHTTPRequestJob(ctx context.Context, rawConfig json.RawMessage, runDate time.Time) error {
+	var config httpRequestJobConfig
+	if err := json.Unmarshal(rawConfig, &config); err != nil {
+		return fmt.Errorf("invalid HTTP request configuration: %w", err)
+	}
+	method := strings.ToUpper(strings.TrimSpace(config.Method))
+	if method == "" {
+		method = http.MethodPost
+	}
+	runCtx, cancel := context.WithTimeout(ctx, queryTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(
+		runCtx,
+		method,
+		renderJobTemplate(config.URL, runDate),
+		strings.NewReader(renderJobTemplate(config.Body, runDate)),
+	)
+	if err != nil {
+		return err
+	}
+	for name, value := range config.Headers {
+		req.Header.Set(name, renderJobTemplate(value, runDate))
+	}
+	client := &http.Client{Timeout: queryTimeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	// The response is deliberately not data for the job. Drain only a small
+	// amount so normal keep-alive connections can be reused, then discard it.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("HTTP request returned %s", resp.Status)
+	}
+	return nil
 }
 
 func errCheckFailed(msg string) error { return errors.New(msg) }
@@ -729,7 +848,7 @@ func (s *Server) JobsTick(w http.ResponseWriter, r *http.Request) {
 		var dependsOnJSON []byte
 		var userID int64
 		if err := rows.Scan(
-			&j.ID, &j.ConnectionID, &j.Name, &j.SQL, &j.CronExpr, &j.Enabled,
+			&j.ID, &j.ConnectionID, &j.Name, &j.JobType, &j.SQL, &j.Config, &j.CronExpr, &j.Enabled,
 			&dependsOnJSON, &j.RetryLimit, &j.RetryDelaySeconds, &j.CheckMode,
 			&j.Layout, &j.NextRunAt, &j.LastRunAt, &j.LastStatus, &userID,
 		); err != nil {

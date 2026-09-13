@@ -33,8 +33,8 @@ const STATUS_COLOR: Record<string, string> = {
 // A run-history view for one job: a Dagster/Airflow-style grid of the last
 // ~9 weeks (one cell per date, colored by that date's latest run status),
 // plus a way to pick any date — past or future — and backfill it, which
-// re-runs the job's SQL with {{date}} etc. resolved to that date instead of
-// today (see backend/internal/api/jobs.go renderJobTemplate).
+// re-runs the job with {{date}} etc. resolved to that date instead of today
+// (in query SQL or HTTP request URL/headers/body).
 export function JobRunCalendar({ jobId }: { jobId: string }) {
   const token = useAuthStore((s) => s.token);
   const runNow = useJobsStore((s) => s.runNow);
@@ -85,10 +85,16 @@ export function JobRunCalendar({ jobId }: { jobId: string }) {
     try {
       const runs = await runNow(jobId, { date, downstream });
       const own = runs.find((r) => r.jobId === jobId) ?? runs[0];
+      const ownJob = jobs.find((job) => job.id === jobId);
       if (runs.length === 1) {
         setMessage(
           own.status === "success"
-            ? { kind: "pass", text: `Succeeded${date ? ` for ${date}` : ""} · ${own.rowsAffected ?? 0} row${own.rowsAffected === 1 ? "" : "s"}` }
+            ? {
+                kind: "pass",
+                text: ownJob?.jobType === "http_request"
+                  ? `HTTP request succeeded${date ? ` for ${date}` : ""}`
+                  : `Succeeded${date ? ` for ${date}` : ""} · ${own.rowsAffected ?? 0} row${own.rowsAffected === 1 ? "" : "s"}`,
+              }
             : { kind: "fail", text: own.error ?? `Run ${own.status}` },
         );
       } else {

@@ -117,7 +117,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                   className="flex h-[34px] cursor-pointer items-center gap-2.5 px-4 text-[12.5px] text-text-primary data-[selected=true]:bg-bg-selected"
                 >
                   <Clock size={13} className="text-text-muted" />
-                  Scheduled queries…
+                  Scheduled jobs…
                 </Command.Item>
               </Command.Group>
             </Command.List>

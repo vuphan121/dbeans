@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { CardLayout, CheckMode, JobRun, ScheduledJob } from "@/lib/types";
+import type { CardLayout, CheckMode, HttpRequestJobConfig, JobRun, JobType, ScheduledJob } from "@/lib/types";
 import { useAuthStore } from "@/state/auth";
 import { FIELD_CENTER, GRID_UNIT, snapToGrid } from "@/lib/canvasBounds";
 import * as api from "@/lib/api";
@@ -30,8 +30,10 @@ function nextLayout(existingCount: number): CardLayout {
 
 export interface NewJobInput {
   name: string;
+  jobType: JobType;
   connectionId: string;
   sql: string;
+  config: Partial<HttpRequestJobConfig>;
   cronExpr: string;
   dependsOn: string[];
   retryLimit: number;

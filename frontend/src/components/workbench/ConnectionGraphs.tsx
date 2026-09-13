@@ -191,7 +191,7 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
           <div className="rounded-[8px] border border-border-default bg-bg-surface px-4 py-6 text-center text-[12.5px] text-text-faint">
             No stats collected yet for this connection.
             <div className="mt-1 text-[11.5px] text-text-quiet">
-              Set up an hourly "Connection stats" scheduled query against this connection to start populating these
+              Set up an hourly "Connection stats" query job against this connection to start populating these
               graphs.
             </div>
           </div>

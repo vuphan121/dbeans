@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Handle, NodeResizer, Position, type NodeProps } from "@xyflow/react";
-import { Clock, GitBranch } from "lucide-react";
+import { Clock } from "lucide-react";
 import { EngineTag } from "@/components/ui/Badge";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/ContextMenu";
 import { useJobsStore } from "@/state/jobs";
@@ -67,15 +67,6 @@ export function JobCard({ data, selected }: NodeProps) {
               <Clock size={10} className="shrink-0" />
               <span className="truncate">{job.cronExpr}</span>
             </div>
-
-            {job.dependsOn.length > 0 && (
-              <div className="flex items-center gap-1.5 text-[11px] text-text-faint">
-                <GitBranch size={10} className="shrink-0" />
-                <span>
-                  {job.dependsOn.length} dependenc{job.dependsOn.length === 1 ? "y" : "ies"}
-                </span>
-              </div>
-            )}
 
             <div className="mt-auto flex items-center gap-1.5 text-[11px] text-text-faint">
               <StatusDot status={job.lastStatus} />

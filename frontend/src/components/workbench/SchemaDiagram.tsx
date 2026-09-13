@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -136,6 +136,20 @@ function DiagramInner({ connectionId }: { connectionId: string }) {
     if (!entry) loadSchema(connectionId);
   }, [connectionId, entry, loadSchema]);
 
+  // Switching to this tab swaps a live DOM subtree in place (unlike
+  // Connections/Jobs, which mount React Flow on a fresh route navigation
+  // into an already-stable layout) — React Flow's first measurement can
+  // land mid-reflow, read a 0×0 container, and then never draw edges again
+  // even once the container settles (nodes still render since their CSS
+  // position doesn't depend on the same measurement). Mounting <ReactFlow>
+  // itself only after a post-paint frame sidesteps the race outright,
+  // instead of trying to coax a bad first measurement into a good one.
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setReady(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
   const allTables = useMemo(() => entry?.schema?.schemas.flatMap((s) => s.tables) ?? [], [entry]);
   const foreignKeys = entry?.schema?.foreignKeys ?? [];
 
@@ -177,7 +191,7 @@ function DiagramInner({ connectionId }: { connectionId: string }) {
     [foreignKeys],
   );
 
-  if (entry?.status === "loading" || !entry) {
+  if (!ready || entry?.status === "loading" || !entry) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <Loader2 size={18} className="animate-spin text-text-quiet" />
@@ -202,7 +216,7 @@ function DiagramInner({ connectionId }: { connectionId: string }) {
   }
 
   return (
-    <div className="dbeans-flow relative min-h-0 flex-1">
+    <div className="dbeans-flow relative min-h-0 flex-1" style={{ width: "100%", height: "100%" }}>
       <ReactFlow
         nodes={nodes}
         edges={edges}

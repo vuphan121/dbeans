@@ -180,3 +180,12 @@ body {
 .dbeans-flow .react-flow__resize-control.line {
   border-color: var(--color-border-focus) !important;
 }
+
+.dbeans-flow .react-flow__edge-path {
+  transition: stroke 0.12s ease, stroke-width 0.12s ease;
+}
+
+.dbeans-flow .react-flow__edge:hover .react-flow__edge-path {
+  stroke: var(--color-accent) !important;
+  stroke-width: 2.5px !important;
+}

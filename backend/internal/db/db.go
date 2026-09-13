@@ -106,6 +106,25 @@ ALTER TABLE job_runs ADD COLUMN IF NOT EXISTS run_date DATE;
 UPDATE job_runs SET run_date = started_at::date WHERE run_date IS NULL;
 ALTER TABLE job_runs ALTER COLUMN run_date SET NOT NULL;
 
+-- job_queue is the durable trigger for dependency-driven jobs: a job with
+-- non-empty depends_on is no longer matched by its own cron (see
+-- idx_jobs_next_run_at's WHERE clause below) — instead, whenever a job
+-- succeeds, every job that depends on it gets a row here for the same
+-- run_date, and JobsTick drains this table (running an entry as soon as
+-- every one of that job's dependencies has a recorded success for that
+-- exact run_date) every time it's invoked. That makes "wait for the
+-- dependency to actually finish" durable and correct regardless of how the
+-- dependency itself is scheduled — hourly, daily, whatever — instead of
+-- relying on cron times happening to land far enough apart, which the
+-- tick's unordered due-jobs query can't guarantee.
+CREATE TABLE IF NOT EXISTS job_queue (
+	id BIGSERIAL PRIMARY KEY,
+	job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+	run_date DATE NOT NULL,
+	enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	UNIQUE (job_id, run_date)
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_analytics_events_user_id ON analytics_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_analytics_events_created_at ON analytics_events(created_at DESC);
@@ -114,6 +133,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_user_id ON jobs(user_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_next_run_at ON jobs(next_run_at) WHERE enabled;
 CREATE INDEX IF NOT EXISTS idx_job_runs_job_id ON job_runs(job_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_job_runs_run_date ON job_runs(job_id, run_date DESC);
+CREATE INDEX IF NOT EXISTS idx_job_queue_job_id ON job_queue(job_id);
 `
 
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {

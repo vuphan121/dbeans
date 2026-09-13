@@ -151,7 +151,12 @@ func (s *Server) CreateJob(w http.ResponseWriter, r *http.Request) {
 	}
 	retryLimit := clampInt(req.RetryLimit, 0, maxRetryLimit)
 	retryDelay := clampInt(req.RetryDelaySeconds, 0, maxRetryDelaySeconds)
-	nextRunAt := schedule.Next(time.Now())
+	// Anchored to UTC regardless of the server process's own OS timezone —
+	// otherwise "0 17 * * *" means something different running locally
+	// (wherever the dev machine's TZ is set) than it does on Vercel (UTC),
+	// silently corrupting next_run_at if a job is ever created/edited from
+	// a non-UTC host.
+	nextRunAt := schedule.Next(time.Now().UTC())
 
 	_, err = s.Pool.Exec(r.Context(), `
 		INSERT INTO jobs (id, user_id, connection_id, name, sql, cron_expr, enabled, depends_on, retry_limit, retry_delay_seconds, check_mode, layout, next_run_at)
@@ -211,7 +216,7 @@ func (s *Server) UpdateJob(w http.ResponseWriter, r *http.Request) {
 	}
 	retryLimit := clampInt(req.RetryLimit, 0, maxRetryLimit)
 	retryDelay := clampInt(req.RetryDelaySeconds, 0, maxRetryDelaySeconds)
-	nextRunAt := schedule.Next(time.Now())
+	nextRunAt := schedule.Next(time.Now().UTC()) // see CreateJob's comment on why .UTC() matters here
 
 	// This is a full-body update (the edit form always resubmits the whole
 	// job, layout included) — UpdateJobLayout below handles layout-only
@@ -530,7 +535,7 @@ func (s *Server) executeJob(ctx context.Context, userID int64, j Job, triggeredB
 	schedule, scheduleErr := cronParser.Parse(j.CronExpr)
 	var nextRunAt *time.Time
 	if scheduleErr == nil {
-		next := schedule.Next(finished)
+		next := schedule.Next(finished.UTC()) // see CreateJob's comment on why .UTC() matters here
 		nextRunAt = &next
 	}
 
@@ -686,9 +691,16 @@ func (s *Server) JobsTickInfo(w http.ResponseWriter, r *http.Request) {
 
 // JobsTick is hit by an external scheduler (cron-job.org) on a fixed
 // interval, gated by a shared secret rather than a user session — the
-// external caller has no login. It finds every enabled job across every
-// user that is due, and runs each one through the dependency/retry/check
-// pipeline.
+// external caller has no login. It finds every enabled ROOT job (one with
+// no dependencies) across every user that is due by cron, runs it, and on
+// success enqueues that job's dependents into job_queue — which this same
+// tick (and every tick after, until drained) also processes: a queued job
+// runs the moment every one of its dependencies has a recorded success for
+// that queue entry's run_date, cascading through as many levels as are
+// ready. A job with dependencies is therefore never matched by its own
+// next_run_at (see the WHERE clause below) — its cron is purely
+// informational once it depends on something, since the queue is what
+// actually decides when it's allowed to run.
 func (s *Server) JobsTick(w http.ResponseWriter, r *http.Request) {
 	secret := r.URL.Query().Get("secret")
 	if secret == "" {
@@ -702,7 +714,7 @@ func (s *Server) JobsTick(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.Pool.Query(r.Context(), `
 		SELECT `+jobColumns+`, user_id
 		FROM jobs
-		WHERE enabled AND next_run_at IS NOT NULL AND next_run_at <= now()`)
+		WHERE enabled AND next_run_at IS NOT NULL AND next_run_at <= now() AND depends_on = '[]'::jsonb`)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load due jobs")
 		return
@@ -742,10 +754,177 @@ func (s *Server) JobsTick(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC()
 	results := make([]tickResult, 0, len(due))
+	usersToDrain := map[int64]bool{}
 	for _, d := range due {
 		run := s.executeJob(r.Context(), d.userID, d.job, "tick", now)
 		results = append(results, tickResult{JobID: d.job.ID, Name: d.job.Name, Status: run.Status})
+		usersToDrain[d.userID] = true
+		if run.Status == "success" {
+			if allJobs, err := s.loadUserJobs(r.Context(), d.userID); err == nil {
+				s.enqueueDependents(r.Context(), allJobs, d.job.ID, now)
+			}
+		}
+	}
+
+	// Also drain any user's queue left over from a previous tick (e.g. a
+	// dependency that only just succeeded, or a chain that didn't finish
+	// draining before this handler returned last time) even if nothing of
+	// theirs was freshly due this tick.
+	if queuedUsers, err := s.usersWithQueuedWork(r.Context()); err == nil {
+		for userID := range queuedUsers {
+			usersToDrain[userID] = true
+		}
+	}
+	for userID := range usersToDrain {
+		if allJobs, err := s.loadUserJobs(r.Context(), userID); err == nil {
+			s.drainJobQueue(r.Context(), userID, allJobs)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"ran": len(results), "results": results})
+}
+
+// enqueueJob durably marks jobID as ready to be attempted for runDate —
+// see job_queue's migration comment in internal/db for why this exists
+// instead of just relying on cron timing.
+func (s *Server) enqueueJob(ctx context.Context, jobID string, runDate time.Time) {
+	_, _ = s.Pool.Exec(ctx, `
+		INSERT INTO job_queue (job_id, run_date) VALUES ($1, $2)
+		ON CONFLICT (job_id, run_date) DO NOTHING`,
+		jobID, runDate.Format(dateOnlyLayout))
+}
+
+// enqueueDependents queues every job that directly depends on finishedJobID
+// to (eventually) run for the same runDate, now that finishedJobID has
+// succeeded.
+func (s *Server) enqueueDependents(ctx context.Context, allJobs []Job, finishedJobID string, runDate time.Time) {
+	for _, candidate := range allJobs {
+		for _, depID := range candidate.DependsOn {
+			if depID == finishedJobID {
+				s.enqueueJob(ctx, candidate.ID, runDate)
+				break
+			}
+		}
+	}
+}
+
+// dependenciesSatisfied reports whether every job in dependsOn has a
+// successful run recorded for the exact runDate. This is stricter than
+// executeJob's own dependency check (which only looks at each dependency's
+// most recent status, any date) — the queue needs the stronger version to
+// actually be correct: it must wait for *this cycle's* success, not
+// leftover status from a previous run.
+func (s *Server) dependenciesSatisfied(ctx context.Context, dependsOn []string, userID int64, runDate time.Time) bool {
+	for _, depID := range dependsOn {
+		var exists bool
+		err := s.Pool.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1 FROM job_runs jr
+				JOIN jobs j ON j.id = jr.job_id
+				WHERE jr.job_id = $1 AND j.user_id = $2 AND jr.run_date = $3 AND jr.status = 'success'
+			)`, depID, userID, runDate.Format(dateOnlyLayout)).Scan(&exists)
+		if err != nil || !exists {
+			return false
+		}
+	}
+	return true
+}
+
+// usersWithQueuedWork lists every user who currently has at least one
+// pending job_queue entry, so JobsTick can drain it even for a user with
+// nothing freshly due this tick.
+func (s *Server) usersWithQueuedWork(ctx context.Context) (map[int64]bool, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT DISTINCT j.user_id FROM job_queue jq JOIN jobs j ON j.id = jq.job_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]bool{}
+	for rows.Next() {
+		var uid int64
+		if err := rows.Scan(&uid); err != nil {
+			return nil, err
+		}
+		out[uid] = true
+	}
+	return out, rows.Err()
+}
+
+// drainJobQueue repeatedly runs any queued job whose dependencies have all
+// succeeded for its queued run_date, enqueueing further dependents as each
+// one succeeds so a multi-level chain can finish in one pass. Bounded by
+// len(allJobs)+1 passes — each pass can only newly unblock at most one
+// "layer" of a dependency graph, so this is enough for any real DAG and
+// keeps a mistaken dependency cycle (never validated against elsewhere)
+// from looping forever.
+func (s *Server) drainJobQueue(ctx context.Context, userID int64, allJobs []Job) {
+	byID := make(map[string]Job, len(allJobs))
+	for _, j := range allJobs {
+		byID[j.ID] = j
+	}
+
+	type queueEntry struct {
+		id      int64
+		jobID   string
+		runDate time.Time
+	}
+
+	for pass := 0; pass < len(allJobs)+1; pass++ {
+		rows, err := s.Pool.Query(ctx, `
+			SELECT jq.id, jq.job_id, jq.run_date
+			FROM job_queue jq
+			JOIN jobs j ON j.id = jq.job_id
+			WHERE j.user_id = $1`, userID)
+		if err != nil {
+			return
+		}
+		entries := []queueEntry{}
+		for rows.Next() {
+			var e queueEntry
+			if err := rows.Scan(&e.id, &e.jobID, &e.runDate); err != nil {
+				rows.Close()
+				return
+			}
+			entries = append(entries, e)
+		}
+		rows.Close()
+		if len(entries) == 0 {
+			return
+		}
+
+		progressed := false
+		for _, e := range entries {
+			job, ok := byID[e.jobID]
+			if !ok || !job.Enabled {
+				s.Pool.Exec(ctx, `DELETE FROM job_queue WHERE id = $1`, e.id)
+				progressed = true
+				continue
+			}
+
+			var alreadyRan bool
+			_ = s.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM job_runs WHERE job_id = $1 AND run_date = $2)`,
+				e.jobID, e.runDate.Format(dateOnlyLayout)).Scan(&alreadyRan)
+			if alreadyRan {
+				// Already executed for this date via some other path (a
+				// manual run, an earlier drain pass) — nothing left to do.
+				s.Pool.Exec(ctx, `DELETE FROM job_queue WHERE id = $1`, e.id)
+				progressed = true
+				continue
+			}
+
+			if !s.dependenciesSatisfied(ctx, job.DependsOn, userID, e.runDate) {
+				continue // leave queued — try again next pass/tick
+			}
+
+			run := s.executeJob(ctx, userID, job, "tick", e.runDate)
+			s.Pool.Exec(ctx, `DELETE FROM job_queue WHERE id = $1`, e.id)
+			progressed = true
+			if run.Status == "success" {
+				s.enqueueDependents(ctx, allJobs, job.ID, e.runDate)
+			}
+		}
+		if !progressed {
+			return
+		}
+	}
 }

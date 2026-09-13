@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { Switch } from "@/components/ui/Switch";
-import type { KafkaMessage } from "@/mock/kafkaFixtures";
+import type { KafkaMessage } from "@/lib/types";
 
 const COLUMNS = "70px 90px 170px 160px 1fr";
 

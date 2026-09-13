@@ -4,20 +4,20 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { useRedisStore } from "@/state/redis";
-import type { RedisType, RedisValue } from "@/mock/redisFixtures";
+import type { RedisType, RedisValue } from "@/lib/types";
 
 function emptyValue(type: RedisType): RedisValue {
   switch (type) {
     case "string":
       return { type: "string", value: "" };
     case "hash":
-      return { type: "hash", fields: [] };
+      return { type: "hash", fields: [{ field: "field", value: "" }] };
     case "list":
-      return { type: "list", items: [] };
+      return { type: "list", items: [""] };
     case "set":
-      return { type: "set", members: [] };
+      return { type: "set", members: [""] };
     case "zset":
-      return { type: "zset", members: [] };
+      return { type: "zset", members: [{ member: "member", score: 0 }] };
   }
 }
 
@@ -26,11 +26,15 @@ export function NewKeyDialog({ open, onOpenChange }: { open: boolean; onOpenChan
   const [name, setName] = useState("");
   const [type, setType] = useState<RedisType>("string");
 
-  function handleCreate() {
+  async function handleCreate() {
     if (!name.trim()) return;
-    createKey({ key: name.trim(), ttl: null, value: emptyValue(type) });
-    setName("");
-    onOpenChange(false);
+    try {
+      await createKey({ key: name.trim(), ttl: null, value: emptyValue(type) });
+      setName("");
+      onOpenChange(false);
+    } catch {
+      // The workbench header displays the API error and keeps this dialog open.
+    }
   }
 
   return (
@@ -63,7 +67,7 @@ export function NewKeyDialog({ open, onOpenChange }: { open: boolean; onOpenChan
             <Button variant="ghost" size="md" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
-            <Button variant="primary" size="md" onClick={handleCreate}>
+            <Button variant="primary" size="md" onClick={() => void handleCreate()}>
               Create key
             </Button>
           </div>

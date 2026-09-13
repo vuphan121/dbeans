@@ -46,6 +46,7 @@ One person: the developer running this for their own side projects, home lab, or
 ### Redis & Kafka inspection
 - **Redis:** browse keys (pattern search), view/edit values by type (string, hash, list, set, zset), edit TTL, delete/create keys.
 - **Kafka:** browse topics, view messages (partition/offset/timestamp/key/value/headers, optional live tail), produce a test message. No topic administration.
+- **Implementation status:** both inspectors use the real configured Redis/Kafka source. Redis loads at most 500 keys and 500 collection members per value; Kafka loads the latest 100 messages and live-tail refreshes every three seconds.
 
 ### Schema browser
 - Tree view of databases → schemas → tables/views → columns/indexes/constraints.

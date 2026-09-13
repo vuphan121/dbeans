@@ -1,13 +1,15 @@
 import { useState } from "react";
-import { Trash2, Plus, X } from "lucide-react";
+import { Save, Trash2, Plus, X } from "lucide-react";
 import { useRedisStore } from "@/state/redis";
-import type { RedisKeyEntry, RedisValue } from "@/mock/redisFixtures";
+import type { RedisKeyEntry, RedisValue } from "@/lib/types";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 
 export function KeyEditor({ entry }: { entry: RedisKeyEntry }) {
   const { updateValue, setTtl, deleteKey } = useRedisStore();
   const [ttlDraft, setTtlDraft] = useState(entry.ttl != null ? String(entry.ttl) : "");
+  const [valueDraft, setValueDraft] = useState<RedisValue>(entry.value);
+  const [saving, setSaving] = useState(false);
 
   function commitTtl() {
     const n = ttlDraft.trim() === "" ? null : Number(ttlDraft);
@@ -35,13 +37,25 @@ export function KeyEditor({ entry }: { entry: RedisKeyEntry }) {
             <span>s</span>
           </div>
         </div>
-        <Button variant="danger" size="sm" onClick={() => deleteKey(entry.key)}>
+        <Button
+          variant="primary"
+          size="sm"
+          disabled={saving}
+          onClick={async () => {
+            setSaving(true);
+            await updateValue(entry.key, valueDraft);
+            setSaving(false);
+          }}
+        >
+          <Save size={12} /> {saving ? "Saving…" : "Save value"}
+        </Button>
+        <Button variant="danger" size="sm" onClick={() => void deleteKey(entry.key)}>
           <Trash2 size={12} /> Delete
         </Button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-5">
-        <ValueEditor value={entry.value} onChange={(v) => updateValue(entry.key, v)} />
+        <ValueEditor value={valueDraft} onChange={setValueDraft} />
       </div>
     </div>
   );

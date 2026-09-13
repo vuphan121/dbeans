@@ -111,6 +111,35 @@ export interface QueryResult {
   command: string;
 }
 
+export type RedisType = "string" | "hash" | "list" | "set" | "zset";
+export type RedisValue =
+  | { type: "string"; value: string }
+  | { type: "hash"; fields: { field: string; value: string }[] }
+  | { type: "list"; items: string[] }
+  | { type: "set"; members: string[] }
+  | { type: "zset"; members: { member: string; score: number }[] };
+
+export interface RedisKeyEntry {
+  key: string;
+  ttl: number | null;
+  value: RedisValue;
+}
+
+export interface KafkaTopic {
+  name: string;
+  partitions: number;
+  approxMessages: number;
+}
+
+export interface KafkaMessage {
+  partition: number;
+  offset: number;
+  timestamp: string;
+  key: string | null;
+  value: string;
+  headers: Record<string, string>;
+}
+
 export type CheckMode = "none" | "fail_if_no_rows" | "fail_if_rows";
 export type JobStatus = "never_run" | "success" | "failed" | "blocked";
 

@@ -42,7 +42,7 @@ A single persistent workbench layout, similar to a code editor:
 ## 3. Key screens
 
 ### Login / unlock
-Minimal, centered single field (master password) on a calm background. No marketing copy, no "forgot password" flow (single-user, self-hosted — the user controls the secret directly). Clear error state on wrong password with rate-limit feedback if triggered.
+Minimal, centered username + password fields on a calm background. No marketing copy, no "forgot password" flow (accounts are seeded server-side by whoever runs the self-hosted instance). On failure, a plain "username or password didn't match" — no attempt-count/lockout detail surfaced to the field itself, so a wrong guess can't be used to enumerate anything about the account.
 
 ### Connections list / add-connection
 - Empty state on first run: one clear "Add a connection" call to action, not a blank dashboard.
@@ -52,13 +52,18 @@ Minimal, centered single field (master password) on a calm background. No market
 ### Workbench (core screen)
 As laid out in §2. Schema tree nodes expand lazily with subtle loading affordance (skeleton row, not a spinner takeover). Selecting a table opens a "browse data" tab (a lightweight, pre-filled `SELECT *` view with grid) distinct from a raw SQL tab, so browsing data doesn't require writing SQL.
 
+A "Query" / "Graphs" switcher sits in the workbench's top bar, next to the query tabs — Graphs swaps the editor+results pane for a per-connection health/metrics view (reachability, auth, TLS, storage, connection count, latency, recent outages) built from small stat cards and hand-rolled line charts using the same neutral/monochrome palette as everywhere else, not a dropped-in charting library's default look. Switching back to Query preserves whatever tabs and unsaved SQL were open.
+
+### Scheduled queries (canvas)
+A second pannable/zoomable board, alongside the connections one — one card per scheduled job (name, connection, cron, last status), positioned and resized the same way connection cards are. Dependencies between jobs are drawn as arrows directly on the canvas (smoothstep/orthogonal routing, not freeform curves, so several arrows converging on one job don't tangle) rather than only being visible as text in a form. Right-clicking a card gives Edit/Pause/Remove; running a job on demand and reviewing its history — a 9-week calendar of run status, colored per day, plus a recent-runs list — lives in the job's own edit panel instead, so the canvas stays a map of the pipeline rather than an action surface.
+
 ### Results grid / data editing
 - Spreadsheet-like: click a cell to select, double-click (or `Enter`) to edit.
 - An edited cell is visually marked (subtle highlight) until committed; committing requires an explicit confirm (`Enter` again, or a small "N pending changes — Save / Discard" bar), never silent auto-save on blur.
 - Large result sets are virtualized and paginated server-side; the grid never tries to render or hold an unbounded result set in memory.
 
 ### Settings
-One page, sections for: Appearance (theme), Security (change master password, session settings), Connections (manage/delete saved ones), Snippets (manage saved queries). No nested settings-within-settings maze.
+One page, sections for: Appearance (theme), Security (change account password, session settings), Connections (manage/delete saved ones), Snippets (manage saved queries). No nested settings-within-settings maze.
 
 ## 4. Visual style
 

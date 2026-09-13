@@ -403,12 +403,21 @@ type runJobNowRequest struct {
 	// Date, if given, backfills the job for that logical date instead of
 	// today — {{date}} etc. in the SQL resolve to this instead of "now".
 	Date string `json:"date,omitempty"`
+	// Downstream mirrors Airflow's "Downstream" clear option: also (re)run
+	// every job that depends on this one, and transitively theirs, instead
+	// of just this job in isolation. Stops cascading past any job that
+	// doesn't succeed, since its own downstream jobs would just report
+	// "blocked" anyway.
+	Downstream bool `json:"downstream,omitempty"`
 }
 
 // RunJobNow executes a job immediately, outside its schedule — used by the
 // "Run now" and "Backfill" actions in the UI (an empty/omitted body runs for
 // today; a "date" backfills that specific date instead). Still goes through
-// the same dependency/retry/check pipeline as a scheduled tick.
+// the same dependency/retry/check pipeline as a scheduled tick. With
+// "downstream" set, cascades through every job that (transitively) depends
+// on this one, in dependency order, stopping a branch as soon as something
+// in it doesn't succeed.
 func (s *Server) RunJobNow(w http.ResponseWriter, r *http.Request) {
 	user, err := auth.Resolve(r.Context(), s.Pool, bearerToken(r))
 	if err != nil {
@@ -440,8 +449,19 @@ func (s *Server) RunJobNow(w http.ResponseWriter, r *http.Request) {
 		triggeredBy = "backfill"
 	}
 
-	run := s.executeJob(r.Context(), user.ID, j, triggeredBy, runDate)
-	writeJSON(w, http.StatusOK, run)
+	if !req.Downstream {
+		run := s.executeJob(r.Context(), user.ID, j, triggeredBy, runDate)
+		writeJSON(w, http.StatusOK, run)
+		return
+	}
+
+	allJobs, err := s.loadUserJobs(r.Context(), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load jobs")
+		return
+	}
+	runs := s.runJobDownstream(r.Context(), user.ID, j, triggeredBy, runDate, allJobs, map[string]bool{})
+	writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
 }
 
 // executeJob runs one job through dependency checking, retries, and the
@@ -527,6 +547,60 @@ func (s *Server) executeJob(ctx context.Context, userID int64, j Job, triggeredB
 		finished, run.Status, nextRunAt, j.ID)
 
 	return run
+}
+
+// loadUserJobs fetches every job owned by a user — used by the downstream
+// cascade below to find dependents without a query per level.
+func (s *Server) loadUserJobs(ctx context.Context, userID int64) ([]Job, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT `+jobColumns+` FROM jobs WHERE user_id = $1`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	jobs := []Job{}
+	for rows.Next() {
+		j, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, j)
+	}
+	return jobs, rows.Err()
+}
+
+// runJobDownstream runs job, then — only if it succeeded — every other job
+// that lists it in dependsOn, recursively. visited guards against a cycle
+// (dependsOn isn't validated to be acyclic) sending this into a loop, and
+// against a diamond dependency (two branches sharing a downstream job)
+// running that shared job twice.
+func (s *Server) runJobDownstream(
+	ctx context.Context, userID int64, job Job, triggeredBy string, runDate time.Time,
+	allJobs []Job, visited map[string]bool,
+) []JobRun {
+	if visited[job.ID] {
+		return nil
+	}
+	visited[job.ID] = true
+
+	run := s.executeJob(ctx, userID, job, triggeredBy, runDate)
+	runs := []JobRun{run}
+	if run.Status != "success" {
+		return runs
+	}
+
+	for _, candidate := range allJobs {
+		dependsOnThis := false
+		for _, depID := range candidate.DependsOn {
+			if depID == job.ID {
+				dependsOnThis = true
+				break
+			}
+		}
+		if dependsOnThis {
+			runs = append(runs, s.runJobDownstream(ctx, userID, candidate, triggeredBy, runDate, allJobs, visited)...)
+		}
+	}
+	return runs
 }
 
 // renderJobTemplate substitutes Jinja-style {{ placeholder }} date variables

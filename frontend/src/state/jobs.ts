@@ -48,8 +48,10 @@ interface JobsState {
   removeJob: (id: string) => void;
   toggleEnabled: (id: string) => void;
   updateLayout: (id: string, layout: CardLayout) => void;
-  // date backfills that logical date instead of running for today.
-  runNow: (id: string, date?: string) => Promise<JobRun>;
+  // date backfills that logical date instead of running for today; downstream
+  // also (re)runs every job that depends on this one, transitively. Always
+  // resolves to every run that happened, in order.
+  runNow: (id: string, options?: { date?: string; downstream?: boolean }) => Promise<JobRun[]>;
 }
 
 export const useJobsStore = create<JobsState>()((set, get) => ({
@@ -112,15 +114,17 @@ export const useJobsStore = create<JobsState>()((set, get) => ({
     if (token) api.updateJobLayout(token, id, layout).catch(() => {});
   },
 
-  runNow: async (id, date) => {
+  runNow: async (id, options) => {
     const token = useAuthStore.getState().token;
     if (!token) throw new Error("not signed in");
-    const run = await api.runJobNow(token, id, date);
+    const runs = await api.runJobNow(token, id, options);
+    const byJobId = new Map(runs.map((r) => [r.jobId, r]));
     set((s) => ({
-      jobs: s.jobs.map((j) =>
-        j.id === id ? { ...j, lastStatus: run.status, lastRunAt: run.finishedAt ?? j.lastRunAt } : j,
-      ),
+      jobs: s.jobs.map((j) => {
+        const run = byJobId.get(j.id);
+        return run ? { ...j, lastStatus: run.status, lastRunAt: run.finishedAt ?? j.lastRunAt } : j;
+      }),
     }));
-    return run;
+    return runs;
   },
 }));

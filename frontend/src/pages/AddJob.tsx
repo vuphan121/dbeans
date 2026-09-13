@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Switch } from "@/components/ui/Switch";
 import { Select } from "@/components/ui/Select";
-import { EngineTag } from "@/components/ui/Badge";
 import { useConnectionsStore } from "@/state/connections";
 import { useJobsStore } from "@/state/jobs";
 import { useAuthStore } from "@/state/auth";
@@ -223,14 +222,6 @@ export default function AddJob() {
           <Field label="Runs">
             <JobRunCalendar jobId={existing.id} />
           </Field>
-        )}
-
-        {sqlConnections.length > 0 && (
-          <div className="flex items-center gap-2 rounded-[8px] border border-border-default px-3 py-2 text-[11px] text-text-faint">
-            <EngineTag engine={sqlConnections.find((c) => c.id === connectionId)?.engine ?? "postgres"} size={20} />
-            Only Postgres connections actually execute right now — other SQL engines will fail at run time until
-            their drivers are wired up.
-          </div>
         )}
 
         <div className="flex items-center justify-end gap-2">

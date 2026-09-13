@@ -72,6 +72,7 @@ export function SqlEditor({
         value={value}
         onChange={onChange}
         height="100%"
+        style={{ height: "100%" }}
         theme={theme === "dark" ? darkSqlTheme : lightSqlTheme}
         extensions={extensions}
         basicSetup={{ lineNumbers: true, foldGutter: false, highlightActiveLine: true }}

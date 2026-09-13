@@ -38,11 +38,13 @@ const STATUS_COLOR: Record<string, string> = {
 export function JobRunCalendar({ jobId }: { jobId: string }) {
   const token = useAuthStore((s) => s.token);
   const runNow = useJobsStore((s) => s.runNow);
+  const jobs = useJobsStore((s) => s.jobs);
 
   const [calendar, setCalendar] = useState<JobRunCalendarDay[]>([]);
   const [recentRuns, setRecentRuns] = useState<JobRun[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [downstream, setDownstream] = useState(false);
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState<{ kind: "pass" | "fail"; text: string } | null>(null);
 
@@ -81,12 +83,23 @@ export function JobRunCalendar({ jobId }: { jobId: string }) {
     setRunning(true);
     setMessage(null);
     try {
-      const run = await runNow(jobId, date);
-      setMessage(
-        run.status === "success"
-          ? { kind: "pass", text: `Succeeded${date ? ` for ${date}` : ""} · ${run.rowsAffected ?? 0} row${run.rowsAffected === 1 ? "" : "s"}` }
-          : { kind: "fail", text: run.error ?? `Run ${run.status}` },
-      );
+      const runs = await runNow(jobId, { date, downstream });
+      const own = runs.find((r) => r.jobId === jobId) ?? runs[0];
+      if (runs.length === 1) {
+        setMessage(
+          own.status === "success"
+            ? { kind: "pass", text: `Succeeded${date ? ` for ${date}` : ""} · ${own.rowsAffected ?? 0} row${own.rowsAffected === 1 ? "" : "s"}` }
+            : { kind: "fail", text: own.error ?? `Run ${own.status}` },
+        );
+      } else {
+        const failed = runs.filter((r) => r.status !== "success");
+        const jobName = (id: string) => jobs.find((j) => j.id === id)?.name ?? id;
+        setMessage(
+          failed.length === 0
+            ? { kind: "pass", text: `${runs.length} jobs succeeded${date ? ` for ${date}` : ""}: ${runs.map((r) => jobName(r.jobId)).join(", ")}` }
+            : { kind: "fail", text: `${failed.length}/${runs.length} jobs didn't succeed: ${failed.map((r) => `${jobName(r.jobId)} (${r.status})`).join(", ")}` },
+        );
+      }
       await refresh();
     } catch (err) {
       setMessage({ kind: "fail", text: err instanceof ApiError ? err.message : "Failed to run job" });
@@ -97,17 +110,11 @@ export function JobRunCalendar({ jobId }: { jobId: string }) {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3 text-[11px] text-text-quiet">
-          <Legend color="bg-success-dot" label="Succeeded" />
-          <Legend color="bg-error-dot" label="Failed" />
-          <Legend color="bg-text-faint" label="Blocked" />
-          <Legend color="bg-bg-inset" label="No run" outline />
-        </div>
-        <Button variant="secondary" size="sm" onClick={() => handleRun()} disabled={running}>
-          {running ? <Loader2 size={12} className="animate-spin" /> : null}
-          Run now
-        </Button>
+      <div className="flex items-center gap-3 text-[11px] text-text-quiet">
+        <Legend color="bg-success-dot" label="Succeeded" />
+        <Legend color="bg-error-dot" label="Failed" />
+        <Legend color="bg-text-faint" label="Blocked" />
+        <Legend color="bg-bg-inset" label="No run" outline />
       </div>
 
       <div className={cn("grid grid-cols-9 gap-1", loading && "opacity-50")}>
@@ -132,19 +139,30 @@ export function JobRunCalendar({ jobId }: { jobId: string }) {
       </div>
 
       {selectedDate && (
-        <div className="flex items-center justify-between rounded-[7px] border border-border-default bg-bg-inset px-3 py-2">
-          <div className="flex flex-col gap-0.5">
-            <span className="font-mono text-[12px] text-text-primary">{selectedDate}</span>
-            <span className="text-[11px] text-text-faint">
-              {statusByDate.has(selectedDate)
-                ? `${statusByDate.get(selectedDate)!.runCount} run(s) · latest ${statusByDate.get(selectedDate)!.status}`
-                : "No run recorded for this date"}
-            </span>
+        <div className="flex flex-col gap-2 rounded-[7px] border border-border-default bg-bg-inset px-3 py-2">
+          <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-0.5">
+              <span className="font-mono text-[12px] text-text-primary">{selectedDate}</span>
+              <span className="text-[11px] text-text-faint">
+                {statusByDate.has(selectedDate)
+                  ? `${statusByDate.get(selectedDate)!.runCount} run(s) · latest ${statusByDate.get(selectedDate)!.status}`
+                  : "No run recorded for this date"}
+              </span>
+            </div>
+            <Button variant="primary" size="sm" onClick={() => handleRun(selectedDate)} disabled={running}>
+              {running ? <Loader2 size={12} className="animate-spin" /> : null}
+              Backfill {selectedDate}
+            </Button>
           </div>
-          <Button variant="primary" size="sm" onClick={() => handleRun(selectedDate)} disabled={running}>
-            {running ? <Loader2 size={12} className="animate-spin" /> : null}
-            Backfill {selectedDate}
-          </Button>
+          <label className="flex cursor-pointer items-center gap-1.5 text-[11px] text-text-faint">
+            <input
+              type="checkbox"
+              checked={downstream}
+              onChange={(e) => setDownstream(e.target.checked)}
+              className="h-3 w-3 accent-inverse-bg"
+            />
+            Downstream — also (re)run every job that depends on this one
+          </label>
         </div>
       )}
 

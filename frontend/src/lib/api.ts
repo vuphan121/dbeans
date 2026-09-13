@@ -157,13 +157,21 @@ export function deleteJob(token: string, id: string): Promise<{ ok: boolean }> {
 }
 
 // date, if given (YYYY-MM-DD), backfills the job for that logical date
-// instead of running it for today.
-export function runJobNow(token: string, id: string, date?: string): Promise<JobRun> {
-  return request(`/api/jobs/${id}/run`, {
+// instead of running it for today. downstream additionally (re)runs every
+// job that depends on this one, transitively, stopping a branch as soon as
+// something in it doesn't succeed — mirrors Airflow's "Downstream" clear
+// option. Always resolves to an array: one run without downstream, one run
+// per job in the cascade with it.
+export function runJobNow(
+  token: string,
+  id: string,
+  options?: { date?: string; downstream?: boolean },
+): Promise<JobRun[]> {
+  return request<JobRun | { runs: JobRun[] }>(`/api/jobs/${id}/run`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify(date ? { date } : {}),
-  });
+    body: JSON.stringify({ date: options?.date || undefined, downstream: options?.downstream || undefined }),
+  }).then((res) => ("runs" in res ? res.runs : [res]));
 }
 
 export function listJobRuns(token: string, id: string): Promise<JobRun[]> {

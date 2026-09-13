@@ -13,14 +13,13 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import dagre from "dagre";
 import { KeyRound, Link2, Loader2, Table2 } from "lucide-react";
 import { useSchemaStore } from "@/state/schema";
 import type { TableInfo } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const NODE_WIDTH = 220;
-const COL_SPACING = 300;
-const ROW_GAP = 28;
 
 // information_schema's data_type is SQL-standard-verbose ("timestamp with
 // time zone"); psql's own \d shorthand is what any Postgres user actually
@@ -87,47 +86,44 @@ function TableNode({ data }: NodeProps<Node<TableNodeData>>) {
 
 const nodeTypes = { table: TableNode };
 
-// Lays tables out left-to-right by dependency depth (a table with no
-// outgoing foreign keys sits at depth 0; anything referencing it sits one
-// column to the right of the deepest table it references) rather than a
-// plain grid — for a schema that's mostly a tree/DAG (the common case),
-// this reads as an actual diagram instead of an arbitrary scatter, and it's
-// deterministic so the same schema always lays out the same way.
+function tableNodeHeight(table: TableInfo): number {
+  return 36 + table.columns.length * 24 + 8;
+}
+
+// Lays tables out left-to-right by dependency (a table nothing references
+// sits leftmost; anything referencing it sits to the right) using dagre's
+// layered-graph algorithm rather than a hand-rolled column stack — dagre
+// also reorders nodes *within* each layer (the barycenter heuristic) to
+// minimize edge crossings, which a plain "depth column, alphabetical
+// order" layout has no way to do: two tables in the same column with
+// crisscrossing dependents just looks tangled no matter how the arrows
+// themselves are drawn. `edges` are dependency edges (from = the
+// referencing table, to = the table it references) — dagre is fed the
+// reverse (to, from) so the referenced table lands in an earlier/left
+// rank, matching how the actual FK arrows are drawn separately.
 function layoutTables(tables: TableInfo[], edges: { from: string; to: string }[]): Map<string, { x: number; y: number }> {
-  const depth = new Map<string, number>();
-  const outgoing = new Map<string, string[]>();
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({ rankdir: "LR", nodesep: 24, ranksep: 90, marginx: 0, marginy: 0 });
+  g.setDefaultEdgeLabel(() => ({}));
+
+  for (const t of tables) {
+    g.setNode(t.name, { width: NODE_WIDTH, height: tableNodeHeight(t) });
+  }
+  const seen = new Set<string>();
   for (const e of edges) {
     if (e.from === e.to) continue;
-    if (!outgoing.has(e.from)) outgoing.set(e.from, []);
-    outgoing.get(e.from)!.push(e.to);
+    const key = `${e.to}->${e.from}`;
+    if (seen.has(key)) continue; // dagre errors on duplicate edges between the same pair
+    seen.add(key);
+    g.setEdge(e.to, e.from);
   }
 
-  function depthOf(name: string, seen: Set<string>): number {
-    if (depth.has(name)) return depth.get(name)!;
-    if (seen.has(name)) return 0; // cycle guard
-    seen.add(name);
-    const targets = outgoing.get(name) ?? [];
-    const d = targets.length === 0 ? 0 : 1 + Math.max(...targets.map((t) => depthOf(t, seen)));
-    depth.set(name, d);
-    return d;
-  }
-  for (const t of tables) depthOf(t.name, new Set());
-
-  const byColumn = new Map<number, TableInfo[]>();
-  for (const t of tables) {
-    const d = depth.get(t.name) ?? 0;
-    if (!byColumn.has(d)) byColumn.set(d, []);
-    byColumn.get(d)!.push(t);
-  }
+  dagre.layout(g);
 
   const positions = new Map<string, { x: number; y: number }>();
-  for (const [col, colTables] of byColumn) {
-    let y = 0;
-    for (const t of colTables) {
-      positions.set(t.name, { x: col * COL_SPACING, y });
-      const height = 36 + t.columns.length * 24 + 8;
-      y += height + ROW_GAP;
-    }
+  for (const t of tables) {
+    const n = g.node(t.name);
+    if (n) positions.set(t.name, { x: n.x - n.width / 2, y: n.y - n.height / 2 });
   }
   return positions;
 }

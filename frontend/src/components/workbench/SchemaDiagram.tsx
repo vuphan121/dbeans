@@ -170,20 +170,33 @@ function tableNodeHeight(table: TableInfo): number {
   return 36 + table.columns.length * 24 + 8;
 }
 
+const SUB_COL_GAP = 40;
+const RANK_GAP = 90;
+const ROW_GAP = 28;
+// A hub table (most tables referencing one directly, e.g. every table
+// pointing at "users") puts dozens of tables in the same dagre rank —
+// dagre stacks a rank in a single vertical file with no maximum, which
+// turns into one absurdly long, hard-to-scan column. Wrapping any rank
+// past this many tables into extra side-by-side sub-columns keeps the
+// same left-to-right dependency ordering while staying roughly square.
+const MAX_PER_COLUMN = 6;
+
 // Lays tables out left-to-right by dependency (a table nothing references
-// sits leftmost; anything referencing it sits to the right) using dagre's
-// layered-graph algorithm rather than a hand-rolled column stack — dagre
-// also reorders nodes *within* each layer (the barycenter heuristic) to
-// minimize edge crossings, which a plain "depth column, alphabetical
-// order" layout has no way to do: two tables in the same column with
-// crisscrossing dependents just looks tangled no matter how the arrows
-// themselves are drawn. `edges` are dependency edges (from = the
-// referencing table, to = the table it references) — dagre is fed the
-// reverse (to, from) so the referenced table lands in an earlier/left
-// rank, matching how the actual FK arrows are drawn separately.
+// sits leftmost; anything referencing it sits to the right). dagre's
+// layered-graph algorithm decides *which* rank each table belongs to and,
+// within a rank, the crossing-minimized vertical order (its barycenter
+// heuristic) — both genuinely hard to reproduce by hand. What dagre does
+// *not* do is cap how tall a single rank's column gets, so its raw
+// per-node positions are only a starting point: tables are regrouped by
+// rank, and any rank over MAX_PER_COLUMN wraps into extra sub-columns,
+// preserving dagre's within-rank order rather than dagre's raw pixels.
+// `edges` are dependency edges (from = the referencing table, to = the
+// table it references) — dagre is fed the reverse (to, from) so the
+// referenced table lands in an earlier/left rank, matching how the actual
+// FK arrows are drawn separately.
 function layoutTables(tables: TableInfo[], edges: { from: string; to: string }[]): Map<string, { x: number; y: number }> {
   const g = new dagre.graphlib.Graph();
-  g.setGraph({ rankdir: "LR", nodesep: 24, ranksep: 90, marginx: 0, marginy: 0 });
+  g.setGraph({ rankdir: "LR", nodesep: 24, ranksep: RANK_GAP, marginx: 0, marginy: 0 });
   g.setDefaultEdgeLabel(() => ({}));
 
   for (const t of tables) {
@@ -200,10 +213,53 @@ function layoutTables(tables: TableInfo[], edges: { from: string; to: string }[]
 
   dagre.layout(g);
 
-  const positions = new Map<string, { x: number; y: number }>();
+  // Group tables by rank. Every node shares NODE_WIDTH, so dagre (in LR
+  // mode) assigns every table in the same rank an identical x — a safe,
+  // exact way to recover rank membership from its output.
+  const byRank = new Map<number, TableInfo[]>();
   for (const t of tables) {
     const n = g.node(t.name);
-    if (n) positions.set(t.name, { x: n.x - n.width / 2, y: n.y - n.height / 2 });
+    if (!n) continue;
+    const rankKey = Math.round(n.x);
+    if (!byRank.has(rankKey)) byRank.set(rankKey, []);
+    byRank.get(rankKey)!.push(t);
+  }
+  for (const group of byRank.values()) {
+    group.sort((a, b) => g.node(a.name).y - g.node(b.name).y); // dagre's crossing-minimized order
+  }
+
+  const positions = new Map<string, { x: number; y: number }>();
+  let rankX = 0;
+  for (const rankKey of [...byRank.keys()].sort((a, b) => a - b)) {
+    const group = byRank.get(rankKey)!;
+    const subCols = Math.max(1, Math.ceil(group.length / MAX_PER_COLUMN));
+    const perCol = Math.ceil(group.length / subCols);
+
+    const colHeights: number[] = [];
+    for (let col = 0; col < subCols; col++) {
+      const colTables = group.slice(col * perCol, (col + 1) * perCol);
+      let y = 0;
+      for (const t of colTables) {
+        y += tableNodeHeight(t) + ROW_GAP;
+      }
+      colHeights.push(y - ROW_GAP);
+    }
+    const rankHeight = Math.max(...colHeights, 0);
+
+    for (let col = 0; col < subCols; col++) {
+      const colTables = group.slice(col * perCol, (col + 1) * perCol);
+      // Centers each sub-column vertically against the tallest one in this
+      // rank, then centers the whole rank against the diagram's midline —
+      // otherwise a 1-table rank sits pinned to the top while its 14-table
+      // neighbor stretches far below, which reads as lopsided.
+      let y = (rankHeight - colHeights[col]) / 2 - rankHeight / 2;
+      for (const t of colTables) {
+        positions.set(t.name, { x: rankX + col * (NODE_WIDTH + SUB_COL_GAP), y });
+        y += tableNodeHeight(t) + ROW_GAP;
+      }
+    }
+
+    rankX += subCols * NODE_WIDTH + (subCols - 1) * SUB_COL_GAP + RANK_GAP;
   }
   return positions;
 }

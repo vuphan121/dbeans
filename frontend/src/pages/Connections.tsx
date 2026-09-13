@@ -20,7 +20,7 @@ import { useConnectionsStore } from "@/state/connections";
 import { useUiStore } from "@/state/ui";
 import { requestOpenConnection } from "@/lib/openConnection";
 import { shouldSuppressNodeClick } from "@/lib/contextMenuGuard";
-import { comboLabel, isModPressed, isTypingTarget } from "@/lib/platform";
+import { isModPressed, isTypingTarget } from "@/lib/platform";
 import { CANVAS_BOUNDS, FIELD_CENTER, GRID_UNIT, snapToGrid } from "@/lib/canvasBounds";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { ConnectionCard } from "@/components/connections/ConnectionCard";
@@ -184,12 +184,6 @@ export default function Connections() {
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-border-subtle px-4">
         <Logo size={20} onClick={() => navigate("/connections")} />
         <div className="flex items-center gap-2">
-          <button
-            onClick={focusSearch}
-            className="rounded-[5px] border border-border-strong px-[7px] py-1 font-mono text-[11px] font-medium text-text-faint hover:bg-bg-hover"
-          >
-            {comboLabel("K")}
-          </button>
           <ThemeToggle />
         </div>
       </header>

@@ -20,7 +20,7 @@ import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/Button";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useJobsStore } from "@/state/jobs";
-import { comboLabel, isTypingTarget } from "@/lib/platform";
+import { isTypingTarget } from "@/lib/platform";
 import { CANVAS_BOUNDS, FIELD_CENTER, GRID_UNIT, snapToGrid } from "@/lib/canvasBounds";
 import { JobCard } from "@/components/jobs/JobCard";
 import { shouldSuppressNodeClick } from "@/lib/contextMenuGuard";
@@ -175,12 +175,6 @@ export default function Jobs() {
           <div className="text-[13px] font-medium text-text-secondary">Scheduled queries</div>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={focusSearch}
-            className="rounded-[5px] border border-border-strong px-[7px] py-1 font-mono text-[11px] font-medium text-text-faint hover:bg-bg-hover"
-          >
-            {comboLabel("K")}
-          </button>
           <ThemeToggle />
         </div>
       </header>

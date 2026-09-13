@@ -6,18 +6,19 @@ dbeans lets you connect to your databases from a browser, browse schemas, write 
 
 ## Status
 
-Early planning stage. No code yet — see the docs below for the current plan.
+Working app: real accounts, connections, schema browsing + SQL execution (Postgres), and scheduled queries — see the docs below for exact scope and what's still stubbed/planned.
 
 ## Docs
 
 - [Product Requirements](docs/PRD.md) — vision, goals, non-goals, feature scope, phased roadmap
 - [Architecture](docs/ARCHITECTURE.md) — tech stack, system design, security, deployment
 - [Design](docs/DESIGN.md) — UI/UX principles, visual style, key screens and interactions
+- [Deployment](docs/DEPLOYMENT.md) — step-by-step Vercel setup (two projects: frontend + backend)
 
 ## At a glance
 
-- **Backend:** Go, single binary, embeds the frontend build
-- **Frontend:** React + TypeScript
-- **Databases supported (v1):** PostgreSQL, MySQL/MariaDB, SQLite
-- **Auth:** single-user password/passphrase gate (this is a personal tool, not multi-tenant)
-- **Deployment:** single Docker container, self-hosted
+- **Backend:** Go — runs either as a plain binary (local dev, any traditional host) or as a Vercel Go serverless function, same code either way
+- **Frontend:** React + TypeScript (Vite)
+- **Databases supported:** PostgreSQL (real schema browsing + query execution); MySQL/MariaDB and SQLite connections can be saved but don't execute yet
+- **Auth:** real username/password accounts (bcrypt + Postgres), seeded server-side — this is a personal tool, not multi-tenant
+- **Deployment:** two Vercel projects (frontend + backend), or the backend on any traditional host (Railway/Fly.io/a VPS) with just the frontend on Vercel — see [Deployment](docs/DEPLOYMENT.md)

@@ -58,6 +58,11 @@ One person: the developer running this for their own side projects, home lab, or
 - Run selection or full statement; cancel a running query.
 - Keyboard-first: run query, new tab, command palette, etc. all reachable without a mouse.
 
+### Connection graphs
+- A second view for any SQL connection, next to the query editor — a "Query" / "Graphs" switcher in the workbench's top bar.
+- Reachability, authentication, TLS mode, last successful check, storage usage, active vs. max connections, query latency, and engine/version are all shown here — reachability/last-check come from dbeans' existing ping mechanism, everything else from whatever a "Connection stats" scheduled query has been collecting hourly into that connection's own database (see `dbeans_connection_stats` in ARCHITECTURE.md §4) — plus a recent-outages list drawn from that connection's own job run history.
+- If no stats job has ever run for a connection, this just shows an empty state pointing at setting one up — nothing is auto-provisioned.
+
 ### Results grid
 - Paginated, virtualized grid for large result sets.
 - Sort/filter client-side for the loaded page.

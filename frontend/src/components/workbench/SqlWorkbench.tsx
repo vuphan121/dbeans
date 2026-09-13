@@ -6,7 +6,9 @@ import { SqlEditor } from "./SqlEditor";
 import { StatusBar } from "./StatusBar";
 import { ResultsGrid } from "./ResultsGrid";
 import { ResizeDivider } from "./ResizeDivider";
+import { ConnectionGraphs } from "./ConnectionGraphs";
 import { Button } from "@/components/ui/Button";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { useWorkbenchStore } from "@/state/workbench";
 import { useSettingsStore } from "@/state/settings";
 import { useAuthStore } from "@/state/auth";
@@ -25,6 +27,7 @@ export function SqlWorkbench({
   const { theme, editorFontSize } = useSettingsStore();
   const token = useAuthStore((s) => s.token);
   const resolvedTheme = theme === "system" ? (document.documentElement.getAttribute("data-theme") as "dark" | "light" | null) ?? "dark" : theme;
+  const [view, setView] = useState<"query" | "graphs">("query");
   const [running, setRunning] = useState(false);
   const [editorHeight, setEditorHeight] = useState(296);
   const [resultByTab, setResultByTab] = useState<Record<string, QueryResult>>({});
@@ -65,47 +68,66 @@ export function SqlWorkbench({
     <WorkbenchShell
       onOpenPalette={onOpenPalette}
       sidebar={<SchemaTree connectionId={connection.id} />}
-      topBarCenter={<TabStrip />}
-    >
-      {activeTab && (
-        <>
-          <div className="relative shrink-0" style={{ height: editorHeight }}>
-            <SqlEditor
-              value={activeTab.sql ?? ""}
-              onChange={(v) => updateTabSql(activeTab.id, v)}
-              theme={resolvedTheme}
-              fontSize={editorFontSize}
-              onRun={runQuery}
-              connectionId={connection.id}
+      topBarCenter={
+        <div className="flex w-full items-stretch">
+          <div className="flex shrink-0 items-center border-r border-border-subtle px-3">
+            <SegmentedControl<"query" | "graphs">
+              options={[
+                { value: "query", label: "Query" },
+                { value: "graphs", label: "Graphs" },
+              ]}
+              value={view}
+              onChange={setView}
+              className="w-[140px]"
             />
-            <div className="pointer-events-none absolute right-3.5 top-3 flex gap-1.5">
-              <Button variant="secondary" size="sm" className="pointer-events-auto">
-                Format
-              </Button>
-              <Button variant="primary" size="sm" onClick={runQuery} className="pointer-events-auto">
-                {running ? "Running…" : "Run"} <span className="font-mono opacity-55">{comboLabel("⏎")}</span>
-              </Button>
-            </div>
           </div>
-          <ResizeDivider onDrag={resizeEditor} />
-          {result && (
-            <StatusBar
-              rows={result.rowCount}
-              ms={result.durationMs}
-              connectionName={connection.name}
-              schema={"database" in connection.fields ? connection.fields.database : ""}
-            />
-          )}
-          {error ? (
-            <div className="flex flex-1 items-start justify-center overflow-y-auto bg-bg-app p-6">
-              <div className="max-w-xl rounded-[8px] border border-error-dim/40 bg-error-dim/10 px-4 py-3 font-mono text-[12px] text-error-text">
-                {error}
+          {view === "query" && <TabStrip />}
+        </div>
+      }
+    >
+      {view === "graphs" ? (
+        <ConnectionGraphs connection={connection} />
+      ) : (
+        activeTab && (
+          <>
+            <div className="relative shrink-0" style={{ height: editorHeight }}>
+              <SqlEditor
+                value={activeTab.sql ?? ""}
+                onChange={(v) => updateTabSql(activeTab.id, v)}
+                theme={resolvedTheme}
+                fontSize={editorFontSize}
+                onRun={runQuery}
+                connectionId={connection.id}
+              />
+              <div className="pointer-events-none absolute right-3.5 top-3 flex gap-1.5">
+                <Button variant="secondary" size="sm" className="pointer-events-auto">
+                  Format
+                </Button>
+                <Button variant="primary" size="sm" onClick={runQuery} className="pointer-events-auto">
+                  {running ? "Running…" : "Run"} <span className="font-mono opacity-55">{comboLabel("⏎")}</span>
+                </Button>
               </div>
             </div>
-          ) : (
-            <ResultsGrid result={result} />
-          )}
-        </>
+            <ResizeDivider onDrag={resizeEditor} />
+            {result && (
+              <StatusBar
+                rows={result.rowCount}
+                ms={result.durationMs}
+                connectionName={connection.name}
+                schema={"database" in connection.fields ? connection.fields.database : ""}
+              />
+            )}
+            {error ? (
+              <div className="flex flex-1 items-start justify-center overflow-y-auto bg-bg-app p-6">
+                <div className="max-w-xl rounded-[8px] border border-error-dim/40 bg-error-dim/10 px-4 py-3 font-mono text-[12px] text-error-text">
+                  {error}
+                </div>
+              </div>
+            ) : (
+              <ResultsGrid result={result} />
+            )}
+          </>
+        )
       )}
     </WorkbenchShell>
   );

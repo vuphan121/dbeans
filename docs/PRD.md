@@ -63,6 +63,11 @@ One person: the developer running this for their own side projects, home lab, or
 - Reachability, authentication, TLS mode, last successful check, storage usage, active vs. max connections, query latency, and engine/version are all shown here — reachability/last-check come from dbeans' existing ping mechanism, everything else from whatever a "Connection stats" scheduled query has been collecting hourly into that connection's own database (see `dbeans_connection_stats` in ARCHITECTURE.md §4) — plus a recent-outages list drawn from that connection's own job run history.
 - If no stats job has ever run for a connection, this just shows an empty state pointing at setting one up — nothing is auto-provisioned.
 
+### ERD / relationship diagram
+- A third view alongside Query and Graphs — one card per table (name, columns, primary/foreign key markers) and an arrow per foreign key, introspected live from the connection's own `information_schema` (real constraints, not inferred from column-naming conventions).
+- Auto-laid-out by dependency depth (a table nothing else points at sits leftmost; anything referencing it sits one column to the right) so the diagram reads as an actual hierarchy instead of an arbitrary scatter — nodes stay draggable for the session but nothing about the layout is persisted, since it's a live snapshot of the schema, not a user-curated board like the connections/jobs canvases.
+- Reflects reality exactly: a connection whose tables have no real foreign keys defined (an app that never added them, or one built on convention over constraints) correctly shows a diagram with no relationship lines, rather than guessing relationships from naming.
+
 ### Results grid
 - Paginated, virtualized grid for large result sets.
 - Sort/filter client-side for the loaded page.

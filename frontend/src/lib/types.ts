@@ -73,6 +73,7 @@ export interface SavedConnection {
 export interface ColumnInfo {
   name: string;
   type: string;
+  isPrimaryKey?: boolean;
 }
 
 export interface TableInfo {
@@ -86,9 +87,19 @@ export interface SchemaGroup {
   tables: TableInfo[];
 }
 
+export interface ForeignKeyInfo {
+  fromSchema: string;
+  fromTable: string;
+  fromColumn: string;
+  toSchema: string;
+  toTable: string;
+  toColumn: string;
+}
+
 export interface ConnectionSchema {
   database: string;
   schemas: SchemaGroup[];
+  foreignKeys: ForeignKeyInfo[];
 }
 
 export interface QueryResult {

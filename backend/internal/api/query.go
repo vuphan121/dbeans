@@ -84,8 +84,9 @@ func (s *Server) connectTarget(ctx context.Context, engine string, fields sqlCon
 }
 
 type ColumnInfo struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	IsPrimaryKey bool   `json:"isPrimaryKey,omitempty"` // only meaningful for schema introspection, always false on query results
 }
 
 type TableInfo struct {
@@ -99,9 +100,22 @@ type SchemaInfo struct {
 	Tables []TableInfo `json:"tables"`
 }
 
+// ForeignKeyInfo is one edge of the schema's relationship graph — used by
+// the frontend's ERD view (PRD.md "Connection graphs" section) to draw an
+// arrow from the referencing table/column to the referenced one.
+type ForeignKeyInfo struct {
+	FromSchema string `json:"fromSchema"`
+	FromTable  string `json:"fromTable"`
+	FromColumn string `json:"fromColumn"`
+	ToSchema   string `json:"toSchema"`
+	ToTable    string `json:"toTable"`
+	ToColumn   string `json:"toColumn"`
+}
+
 type SchemaResponse struct {
-	Database string       `json:"database"`
-	Schemas  []SchemaInfo `json:"schemas"`
+	Database    string           `json:"database"`
+	Schemas     []SchemaInfo     `json:"schemas"`
+	ForeignKeys []ForeignKeyInfo `json:"foreignKeys"`
 }
 
 // GetConnectionSchema introspects the target database's real tables/views
@@ -162,6 +176,37 @@ func (s *Server) GetConnectionSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	pkColumns := map[tableKey]map[string]bool{}
+	pkRows, err := conn.Query(ctx, `
+		SELECT tc.table_schema, tc.table_name, kcu.column_name
+		FROM information_schema.table_constraints tc
+		JOIN information_schema.key_column_usage kcu
+			ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+		WHERE tc.constraint_type = 'PRIMARY KEY'
+			AND tc.table_schema NOT IN ('pg_catalog', 'information_schema')`)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "primary key introspection failed: "+err.Error())
+		return
+	}
+	for pkRows.Next() {
+		var k tableKey
+		var col string
+		if err := pkRows.Scan(&k.schema, &k.name, &col); err != nil {
+			pkRows.Close()
+			writeError(w, http.StatusInternalServerError, "failed to read primary keys")
+			return
+		}
+		if pkColumns[k] == nil {
+			pkColumns[k] = map[string]bool{}
+		}
+		pkColumns[k][col] = true
+	}
+	pkRows.Close()
+	if err := pkRows.Err(); err != nil {
+		writeError(w, http.StatusBadGateway, "primary key introspection failed: "+err.Error())
+		return
+	}
+
 	columns := map[tableKey][]ColumnInfo{}
 	colRows, err := conn.Query(ctx, `
 		SELECT table_schema, table_name, column_name, data_type
@@ -180,6 +225,7 @@ func (s *Server) GetConnectionSchema(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to read columns")
 			return
 		}
+		col.IsPrimaryKey = pkColumns[k][col.Name]
 		columns[k] = append(columns[k], col)
 	}
 	colRows.Close()
@@ -188,7 +234,37 @@ func (s *Server) GetConnectionSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := SchemaResponse{Database: fields.Database, Schemas: []SchemaInfo{}}
+	foreignKeys := []ForeignKeyInfo{}
+	fkRows, err := conn.Query(ctx, `
+		SELECT tc.table_schema, tc.table_name, kcu.column_name,
+		       ccu.table_schema, ccu.table_name, ccu.column_name
+		FROM information_schema.table_constraints tc
+		JOIN information_schema.key_column_usage kcu
+			ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+		JOIN information_schema.constraint_column_usage ccu
+			ON tc.constraint_name = ccu.constraint_name AND tc.table_schema = ccu.table_schema
+		WHERE tc.constraint_type = 'FOREIGN KEY'
+			AND tc.table_schema NOT IN ('pg_catalog', 'information_schema')`)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "foreign key introspection failed: "+err.Error())
+		return
+	}
+	for fkRows.Next() {
+		var fk ForeignKeyInfo
+		if err := fkRows.Scan(&fk.FromSchema, &fk.FromTable, &fk.FromColumn, &fk.ToSchema, &fk.ToTable, &fk.ToColumn); err != nil {
+			fkRows.Close()
+			writeError(w, http.StatusInternalServerError, "failed to read foreign keys")
+			return
+		}
+		foreignKeys = append(foreignKeys, fk)
+	}
+	fkRows.Close()
+	if err := fkRows.Err(); err != nil {
+		writeError(w, http.StatusBadGateway, "foreign key introspection failed: "+err.Error())
+		return
+	}
+
+	resp := SchemaResponse{Database: fields.Database, Schemas: []SchemaInfo{}, ForeignKeys: foreignKeys}
 	schemaIndex := map[string]int{}
 	for _, k := range order {
 		idx, ok := schemaIndex[k.schema]

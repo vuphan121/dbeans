@@ -7,6 +7,7 @@ import { StatusBar } from "./StatusBar";
 import { ResultsGrid } from "./ResultsGrid";
 import { ResizeDivider } from "./ResizeDivider";
 import { ConnectionGraphs } from "./ConnectionGraphs";
+import { SchemaDiagram } from "./SchemaDiagram";
 import { Button } from "@/components/ui/Button";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { useWorkbenchStore } from "@/state/workbench";
@@ -27,7 +28,7 @@ export function SqlWorkbench({
   const { theme, editorFontSize } = useSettingsStore();
   const token = useAuthStore((s) => s.token);
   const resolvedTheme = theme === "system" ? (document.documentElement.getAttribute("data-theme") as "dark" | "light" | null) ?? "dark" : theme;
-  const [view, setView] = useState<"query" | "graphs">("query");
+  const [view, setView] = useState<"query" | "graphs" | "erd">("query");
   const [running, setRunning] = useState(false);
   const [editorHeight, setEditorHeight] = useState(296);
   const [resultByTab, setResultByTab] = useState<Record<string, QueryResult>>({});
@@ -71,14 +72,15 @@ export function SqlWorkbench({
       topBarCenter={
         <div className="flex w-full items-stretch">
           <div className="flex shrink-0 items-center border-r border-border-subtle px-3">
-            <SegmentedControl<"query" | "graphs">
+            <SegmentedControl<"query" | "graphs" | "erd">
               options={[
                 { value: "query", label: "Query" },
                 { value: "graphs", label: "Graphs" },
+                { value: "erd", label: "ERD" },
               ]}
               value={view}
               onChange={setView}
-              className="w-[140px]"
+              className="w-[200px]"
             />
           </div>
           {view === "query" && <TabStrip />}
@@ -87,6 +89,8 @@ export function SqlWorkbench({
     >
       {view === "graphs" ? (
         <ConnectionGraphs connection={connection} />
+      ) : view === "erd" ? (
+        <SchemaDiagram connectionId={connection.id} />
       ) : (
         activeTab && (
           <>

@@ -14,7 +14,6 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Search, Plus } from "lucide-react";
-import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/Button";
 import { useConnectionsStore } from "@/state/connections";
 import { useUiStore } from "@/state/ui";
@@ -182,7 +181,7 @@ export default function Connections() {
   return (
     <div className="flex h-full flex-col bg-bg-app">
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-border-subtle px-4">
-        <Logo size={20} onClick={() => navigate("/connections")} />
+        <div className="text-[13px] font-medium text-text-secondary">Connections</div>
         <div className="flex items-center gap-2">
           <ThemeToggle />
         </div>

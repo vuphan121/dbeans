@@ -1,6 +1,4 @@
 import type { ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
-import { Logo } from "@/components/Logo";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { comboLabel } from "@/lib/platform";
 
@@ -15,14 +13,9 @@ export function WorkbenchShell({
   children: ReactNode;
   onOpenPalette: () => void;
 }) {
-  const navigate = useNavigate();
-
   return (
     <div className="flex h-full flex-col overflow-hidden bg-bg-app">
       <div className="flex h-11 items-stretch border-b border-border-subtle bg-bg-surface">
-        <div className="flex w-64 shrink-0 items-center gap-2.5 border-r border-border-subtle px-3.5">
-          <Logo size={20} onClick={() => navigate("/connections")} />
-        </div>
         <div className="flex flex-1 items-stretch overflow-hidden">{topBarCenter}</div>
         <div className="flex items-center gap-2 border-l border-border-subtle px-3.5">
           <button

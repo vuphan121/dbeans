@@ -16,7 +16,6 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Search, Plus, Clock, Webhook } from "lucide-react";
-import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/Button";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/DropdownMenu";
@@ -177,11 +176,7 @@ export default function Jobs() {
   return (
     <div className="flex h-full flex-col bg-bg-app">
       <header className="flex h-12 shrink-0 items-center justify-between border-b border-border-subtle px-4">
-        <div className="flex items-center gap-3">
-          <Logo size={20} onClick={() => navigate("/connections")} />
-          <div className="h-4 w-px bg-border-subtle" />
-          <div className="text-[13px] font-medium text-text-secondary">Scheduled jobs</div>
-        </div>
+        <div className="text-[13px] font-medium text-text-secondary">Scheduled jobs</div>
         <div className="flex items-center gap-2">
           <ThemeToggle />
         </div>

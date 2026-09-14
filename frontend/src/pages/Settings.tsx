@@ -2,33 +2,15 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Copy, Check } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import { Switch } from "@/components/ui/Switch";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
-import { Select } from "@/components/ui/Select";
-import { EngineTag } from "@/components/ui/Badge";
 import { useSettingsStore } from "@/state/settings";
-import { useConnectionsStore } from "@/state/connections";
-import { useSnippetsStore } from "@/state/snippets";
-import { useJobsStore } from "@/state/jobs";
 import { useAuthStore } from "@/state/auth";
 import { comboLabel } from "@/lib/platform";
 import { getJobsTickInfo, API_URL } from "@/lib/api";
 
 export default function Settings() {
   const navigate = useNavigate();
-  const {
-    theme,
-    setTheme,
-    editorFontSize,
-    setEditorFontSize,
-    compactGrid,
-    setCompactGrid,
-    autoLockMinutes,
-    setAutoLockMinutes,
-  } = useSettingsStore();
-  const { connections, removeConnection } = useConnectionsStore();
-  const { snippets, removeSnippet } = useSnippetsStore();
-  const jobs = useJobsStore((s) => s.jobs);
+  const { theme, setTheme } = useSettingsStore();
   const { username, lock, token } = useAuthStore();
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
@@ -88,7 +70,7 @@ export default function Settings() {
       <div className="flex flex-1 justify-center overflow-y-auto py-8">
         <div className="flex w-[660px] flex-col gap-8">
           <Section title="Appearance">
-            <Row title="Theme" subtitle="Dark is the default.">
+            <Row title="Theme" subtitle="Dark is the default." last>
               <SegmentedControl
                 value={theme}
                 onChange={setTheme}
@@ -98,16 +80,6 @@ export default function Settings() {
                   { value: "system", label: "System" },
                 ]}
               />
-            </Row>
-            <Row title="Editor font size" subtitle="JetBrains Mono">
-              <Select
-                value={String(editorFontSize)}
-                onChange={(v) => setEditorFontSize(Number(v))}
-                options={["12", "13", "14", "15", "16"].map((n) => ({ value: n, label: `${n} px` }))}
-              />
-            </Row>
-            <Row title="Compact grid rows" subtitle="Fit more rows per screen." last>
-              <Switch checked={compactGrid} onCheckedChange={setCompactGrid} />
             </Row>
           </Section>
 
@@ -145,38 +117,7 @@ export default function Settings() {
                 </Button>
               </div>
               {pwMessage && <div className="text-[11.5px] text-text-faint">{pwMessage}</div>}
-              <div className="h-px bg-border-faint" />
-              <Row title="Auto-lock" subtitle="Lock dbeans after inactivity.">
-                <Select
-                  value={String(autoLockMinutes)}
-                  onChange={(v) => setAutoLockMinutes(Number(v))}
-                  options={[5, 15, 30, 60].map((n) => ({ value: String(n), label: `${n} minutes` }))}
-                />
-              </Row>
             </div>
-          </Section>
-
-          <Section
-            title="Connections"
-            action={
-              <button onClick={() => navigate("/connections/new")} className="text-[12px] text-text-tertiary hover:text-text-primary">
-                + Add
-              </button>
-            }
-          >
-            {connections.map((c) => (
-              <div key={c.id} className="flex h-[46px] items-center gap-3 border-b border-border-faint px-3.5 last:border-b-0">
-                <EngineTag engine={c.engine} size={24} />
-                <div className="text-[12.5px] font-medium text-text-primary">{c.name}</div>
-                <div className="font-mono text-[11px] text-text-faint">{c.dsn}</div>
-                <div className="ml-auto flex gap-3.5 text-[11.5px] text-text-muted">
-                  <button className="hover:text-text-primary">Edit</button>
-                  <button onClick={() => removeConnection(c.id)} className="text-error-dim hover:text-error-text">
-                    Remove
-                  </button>
-                </div>
-              </div>
-            ))}
           </Section>
 
           <Section
@@ -188,13 +129,6 @@ export default function Settings() {
             }
           >
             <div className="flex flex-col gap-3 p-4">
-              <div className="text-[11.5px] text-text-faint">
-                dbeans has no built-in scheduler — an external service like{" "}
-                <span className="text-text-secondary">cron-job.org</span> hits this one URL on a fixed interval (every
-                15 minutes minimum), and dbeans itself decides which of your {jobs.length} scheduled job
-                {jobs.length === 1 ? " is" : "s are"} due. Paste this exact URL in as a GET request there — you
-                only need to configure it once, not per job.
-              </div>
               {tickUrlError ? (
                 <div className="rounded-[7px] border border-error-border bg-error-bg px-3 py-2 text-[11.5px] text-error-text">
                   {tickUrlError}
@@ -211,21 +145,6 @@ export default function Settings() {
                 </div>
               )}
             </div>
-          </Section>
-
-          <Section
-            title="Queries"
-            action={<span className="text-[12px] text-text-tertiary">+ New query</span>}
-          >
-            {snippets.map((s) => (
-              <div key={s.id} className="flex h-11 items-center gap-3 border-b border-border-faint px-3.5 last:border-b-0">
-                <div className="w-[170px] shrink-0 truncate text-[12.5px] font-medium text-text-primary">{s.name}</div>
-                <div className="flex-1 truncate font-mono text-[11px] text-text-faint">{s.sql}</div>
-                <button onClick={() => removeSnippet(s.id)} className="shrink-0 text-[11px] text-text-quiet hover:text-error-dim">
-                  {s.used}
-                </button>
-              </div>
-            ))}
           </Section>
         </div>
       </div>

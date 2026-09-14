@@ -237,9 +237,6 @@ export default function AddJob() {
                 placeholder={'{\n  "date": "{{date}}"\n}'}
                 className="w-full resize-y rounded-[7px] border border-border-input bg-bg-inset px-[11px] py-2 font-mono text-[12px] leading-relaxed text-text-primary outline-none focus:border-border-focus"
               />
-              <div className="text-[11px] text-text-faint">
-                dbeans sends the request and records success for any 2xx status. The response body is ignored. Date placeholders work in the URL, headers, and body.
-              </div>
             </Field>
           </>
         )}

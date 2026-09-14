@@ -5,6 +5,8 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"dbeans/backend/internal/crypto"
 )
 
 func Connect(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
@@ -61,6 +63,17 @@ CREATE TABLE IF NOT EXISTS connections (
 -- already had the connections table before status tracking existed.
 ALTER TABLE connections ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'unknown';
 ALTER TABLE connections ADD COLUMN IF NOT EXISTS last_checked_at TIMESTAMPTZ;
+
+-- fields_enc/dsn_enc hold the AES-256-GCM-encrypted form of the old
+-- plaintext fields/dsn columns (see internal/crypto). The plaintext columns
+-- are left in place (now nullable) rather than dropped — server.go backfills
+-- fields_enc/dsn_enc from them on every boot until every row is migrated;
+-- dropping them is a manual follow-up once that's confirmed solid, never
+-- automated, since they're the only copy of real credentials until then.
+ALTER TABLE connections ADD COLUMN IF NOT EXISTS fields_enc BYTEA;
+ALTER TABLE connections ADD COLUMN IF NOT EXISTS dsn_enc BYTEA;
+ALTER TABLE connections ALTER COLUMN fields DROP NOT NULL;
+ALTER TABLE connections ALTER COLUMN dsn DROP NOT NULL;
 
 -- A job is a typed scheduled action. Existing rows are query jobs; newer
 -- types such as HTTP requests keep their own settings in config and do not need a
@@ -147,6 +160,49 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool) error {
 	_, err := pool.Exec(ctx, schema)
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
+	}
+	return nil
+}
+
+// EncryptLegacyConnections encrypts fields/dsn into fields_enc/dsn_enc for
+// any row that predates connection-credential encryption. Idempotent (only
+// touches rows where fields_enc is still NULL) and safe to call on every
+// boot — see the schema comment above fields_enc for why the plaintext
+// columns aren't dropped once this has run.
+func EncryptLegacyConnections(ctx context.Context, pool *pgxpool.Pool) error {
+	rows, err := pool.Query(ctx, `SELECT id, fields, dsn FROM connections WHERE fields_enc IS NULL`)
+	if err != nil {
+		return fmt.Errorf("encrypt legacy connections: %w", err)
+	}
+	type legacyRow struct {
+		id     string
+		fields []byte
+		dsn    string
+	}
+	var legacy []legacyRow
+	for rows.Next() {
+		var lr legacyRow
+		if err := rows.Scan(&lr.id, &lr.fields, &lr.dsn); err != nil {
+			rows.Close()
+			return fmt.Errorf("encrypt legacy connections: %w", err)
+		}
+		legacy = append(legacy, lr)
+	}
+	rows.Close()
+
+	for _, lr := range legacy {
+		fieldsEnc, err := crypto.Encrypt(lr.fields)
+		if err != nil {
+			return fmt.Errorf("encrypt legacy connection %s fields: %w", lr.id, err)
+		}
+		dsnEnc, err := crypto.Encrypt([]byte(lr.dsn))
+		if err != nil {
+			return fmt.Errorf("encrypt legacy connection %s dsn: %w", lr.id, err)
+		}
+		if _, err := pool.Exec(ctx, `UPDATE connections SET fields_enc = $1, dsn_enc = $2 WHERE id = $3`,
+			fieldsEnc, dsnEnc, lr.id); err != nil {
+			return fmt.Errorf("encrypt legacy connection %s: %w", lr.id, err)
+		}
 	}
 	return nil
 }

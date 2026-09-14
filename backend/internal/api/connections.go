@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"dbeans/backend/internal/auth"
+	"dbeans/backend/internal/crypto"
 )
 
 type Connection struct {
@@ -30,7 +31,7 @@ func (s *Server) ListConnections(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := s.Pool.Query(r.Context(), `
-		SELECT id, name, engine, dsn, fields, layout, last_used, status, last_checked_at
+		SELECT id, name, engine, dsn_enc, fields_enc, layout, last_used, status, last_checked_at
 		FROM connections
 		WHERE user_id = $1
 		ORDER BY created_at ASC`, user.ID)
@@ -43,10 +44,23 @@ func (s *Server) ListConnections(w http.ResponseWriter, r *http.Request) {
 	conns := []Connection{}
 	for rows.Next() {
 		var c Connection
-		if err := rows.Scan(&c.ID, &c.Name, &c.Engine, &c.DSN, &c.Fields, &c.Layout, &c.LastUsed, &c.Status, &c.LastCheckedAt); err != nil {
+		var dsnEnc, fieldsEnc []byte
+		if err := rows.Scan(&c.ID, &c.Name, &c.Engine, &dsnEnc, &fieldsEnc, &c.Layout, &c.LastUsed, &c.Status, &c.LastCheckedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to read connections")
 			return
 		}
+		dsn, err := crypto.Decrypt(dsnEnc)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to decrypt connection")
+			return
+		}
+		fields, err := crypto.Decrypt(fieldsEnc)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to decrypt connection")
+			return
+		}
+		c.DSN = string(dsn)
+		c.Fields = fields
 		conns = append(conns, c)
 	}
 	writeJSON(w, http.StatusOK, conns)
@@ -68,18 +82,29 @@ func (s *Server) CreateConnection(w http.ResponseWriter, r *http.Request) {
 		c.LastUsed = "just now"
 	}
 
+	dsnEnc, err := crypto.Encrypt([]byte(c.DSN))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save connection")
+		return
+	}
+	fieldsEnc, err := crypto.Encrypt(c.Fields)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save connection")
+		return
+	}
+
 	_, err = s.Pool.Exec(r.Context(), `
-		INSERT INTO connections (id, user_id, name, engine, dsn, fields, layout, last_used)
+		INSERT INTO connections (id, user_id, name, engine, dsn_enc, fields_enc, layout, last_used)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (id) DO UPDATE SET
 			name = EXCLUDED.name,
 			engine = EXCLUDED.engine,
-			dsn = EXCLUDED.dsn,
-			fields = EXCLUDED.fields,
+			dsn_enc = EXCLUDED.dsn_enc,
+			fields_enc = EXCLUDED.fields_enc,
 			layout = EXCLUDED.layout,
 			last_used = EXCLUDED.last_used
 		WHERE connections.user_id = $2`,
-		c.ID, user.ID, c.Name, c.Engine, c.DSN, c.Fields, c.Layout, c.LastUsed)
+		c.ID, user.ID, c.Name, c.Engine, dsnEnc, fieldsEnc, c.Layout, c.LastUsed)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save connection")
 		return

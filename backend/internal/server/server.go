@@ -22,6 +22,7 @@ import (
 
 	"dbeans/backend/internal/api"
 	"dbeans/backend/internal/auth"
+	"dbeans/backend/internal/crypto"
 	"dbeans/backend/internal/db"
 )
 
@@ -38,6 +39,10 @@ func New(ctx context.Context) (http.Handler, *pgxpool.Pool, error) {
 
 	allowedOrigins := strings.Split(getenvDefault("ALLOWED_ORIGINS", "http://localhost:5183"), ",")
 
+	if err := crypto.Init(os.Getenv("CONNECTION_ENCRYPTION_KEY")); err != nil {
+		return nil, nil, fmt.Errorf("CONNECTION_ENCRYPTION_KEY: %w", err)
+	}
+
 	pool, err := db.Connect(ctx, databaseURL)
 	if err != nil {
 		return nil, nil, fmt.Errorf("db connect: %w", err)
@@ -46,6 +51,10 @@ func New(ctx context.Context) (http.Handler, *pgxpool.Pool, error) {
 	if err := db.Migrate(ctx, pool); err != nil {
 		pool.Close()
 		return nil, nil, fmt.Errorf("db migrate: %w", err)
+	}
+	if err := db.EncryptLegacyConnections(ctx, pool); err != nil {
+		pool.Close()
+		return nil, nil, fmt.Errorf("db encrypt legacy connections: %w", err)
 	}
 	log.Println("database ready")
 

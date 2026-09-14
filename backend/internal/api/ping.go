@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"dbeans/backend/internal/auth"
+	"dbeans/backend/internal/crypto"
 )
 
 // Repeated visits within this window get the cached result instead of
@@ -83,15 +84,20 @@ func (s *Server) PingConnection(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	var engine, status string
-	var fieldsJSON []byte
+	var fieldsEnc []byte
 	var lastCheckedAt *time.Time
 	err = s.Pool.QueryRow(r.Context(), `
-		SELECT engine, fields, status, last_checked_at
+		SELECT engine, fields_enc, status, last_checked_at
 		FROM connections
 		WHERE id = $1 AND user_id = $2`,
-		id, user.ID).Scan(&engine, &fieldsJSON, &status, &lastCheckedAt)
+		id, user.ID).Scan(&engine, &fieldsEnc, &status, &lastCheckedAt)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "connection not found")
+		return
+	}
+	fieldsJSON, err := crypto.Decrypt(fieldsEnc)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to decrypt connection")
 		return
 	}
 

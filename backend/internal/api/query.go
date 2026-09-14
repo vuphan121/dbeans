@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"dbeans/backend/internal/auth"
+	"dbeans/backend/internal/crypto"
 )
 
 const queryTimeout = 20 * time.Second
@@ -55,12 +56,16 @@ func postgresDSN(f sqlConnFields) string {
 // returns its engine-specific fields so a real connection can be opened
 // against it (as opposed to dbeans' own operator database, s.Pool).
 func (s *Server) loadTargetConnection(ctx context.Context, userID int64, id string) (engine string, fields sqlConnFields, err error) {
-	var fieldsJSON []byte
+	var fieldsEnc []byte
 	err = s.Pool.QueryRow(ctx, `
-		SELECT engine, fields FROM connections WHERE id = $1 AND user_id = $2`,
-		id, userID).Scan(&engine, &fieldsJSON)
+		SELECT engine, fields_enc FROM connections WHERE id = $1 AND user_id = $2`,
+		id, userID).Scan(&engine, &fieldsEnc)
 	if err != nil {
 		return "", sqlConnFields{}, err
+	}
+	fieldsJSON, err := crypto.Decrypt(fieldsEnc)
+	if err != nil {
+		return "", sqlConnFields{}, fmt.Errorf("decrypt connection fields: %w", err)
 	}
 	_ = json.Unmarshal(fieldsJSON, &fields)
 	return engine, fields, nil

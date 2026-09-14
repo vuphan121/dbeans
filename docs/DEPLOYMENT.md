@@ -15,6 +15,7 @@ Two separate Vercel projects, from the same repo: one for `frontend/`, one for `
    - `ALLOWED_ORIGINS` — the frontend's deployed URL (set this *after* step 2, once you know it — see below). Comma-separate if you have more than one.
    - `CRON_SECRET` — a random secret (`openssl rand -hex 32`). Gates `GET /api/jobs/tick`.
    - `SEED_USERNAME` / `SEED_PASSWORD` — creates this login on first run if it doesn't exist yet. Safe to leave set (no-ops once the user exists).
+   - `CONNECTION_ENCRYPTION_KEY` — required. A random 32-byte key (`openssl rand -hex 32`) that encrypts every saved connection's credentials at rest, independent of any user's login password. The server refuses to start without it. **Never rotate or lose this value once connections exist** — there's no re-encryption/rotation tooling yet, so losing it makes every saved connection's credentials unrecoverable (you'd have to delete and re-add them).
    - Do **not** set `PORT` — Vercel injects its own; the server already reads whatever it provides.
 6. Deploy by pushing to the connected Git branch (see the Root Directory gotcha below for why this is the recommended path over `vercel deploy` from inside `backend/`). Note the resulting URL — the frontend needs it. Verify with `curl https://<backend-url>/api/health` → `{"ok":true}`.
 

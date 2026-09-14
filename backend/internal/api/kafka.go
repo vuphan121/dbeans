@@ -16,6 +16,7 @@ import (
 	"github.com/segmentio/kafka-go/sasl/plain"
 
 	"dbeans/backend/internal/auth"
+	"dbeans/backend/internal/crypto"
 )
 
 const maxKafkaMessages = 100
@@ -44,12 +45,16 @@ type kafkaMessageResponse struct {
 
 func (s *Server) kafkaSettings(ctx context.Context, userID int64, id string) (kafkaConnFields, *kafka.Dialer, []string, error) {
 	var engine string
-	var raw []byte
-	if err := s.Pool.QueryRow(ctx, `SELECT engine, fields FROM connections WHERE id = $1 AND user_id = $2`, id, userID).Scan(&engine, &raw); err != nil {
+	var rawEnc []byte
+	if err := s.Pool.QueryRow(ctx, `SELECT engine, fields_enc FROM connections WHERE id = $1 AND user_id = $2`, id, userID).Scan(&engine, &rawEnc); err != nil {
 		return kafkaConnFields{}, nil, nil, fmt.Errorf("connection not found")
 	}
 	if engine != "kafka" {
 		return kafkaConnFields{}, nil, nil, fmt.Errorf("connection is not Kafka")
+	}
+	raw, err := crypto.Decrypt(rawEnc)
+	if err != nil {
+		return kafkaConnFields{}, nil, nil, fmt.Errorf("decrypt connection fields: %w", err)
 	}
 	var f kafkaConnFields
 	if err := json.Unmarshal(raw, &f); err != nil {

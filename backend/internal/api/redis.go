@@ -15,6 +15,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"dbeans/backend/internal/auth"
+	"dbeans/backend/internal/crypto"
 )
 
 const maxRedisKeys = 500
@@ -87,12 +88,16 @@ type redisKeyEntry struct {
 
 func (s *Server) redisClient(ctx context.Context, userID int64, id string) (*redis.Client, error) {
 	var engine string
-	var raw []byte
-	if err := s.Pool.QueryRow(ctx, `SELECT engine, fields FROM connections WHERE id = $1 AND user_id = $2`, id, userID).Scan(&engine, &raw); err != nil {
+	var rawEnc []byte
+	if err := s.Pool.QueryRow(ctx, `SELECT engine, fields_enc FROM connections WHERE id = $1 AND user_id = $2`, id, userID).Scan(&engine, &rawEnc); err != nil {
 		return nil, fmt.Errorf("connection not found")
 	}
 	if engine != "redis" {
 		return nil, fmt.Errorf("connection is not Redis")
+	}
+	raw, err := crypto.Decrypt(rawEnc)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt connection fields: %w", err)
 	}
 	var f redisConnFields
 	if err := json.Unmarshal(raw, &f); err != nil || f.Host == "" || f.Port <= 0 {

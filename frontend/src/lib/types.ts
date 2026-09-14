@@ -74,6 +74,9 @@ export interface ColumnInfo {
   name: string;
   type: string;
   isPrimaryKey?: boolean;
+  /** Which real table this query-result column came from, if any (empty for computed expressions/joins spanning multiple tables). */
+  sourceSchema?: string;
+  sourceTable?: string;
 }
 
 export interface TableInfo {

@@ -104,6 +104,7 @@ func New(ctx context.Context) (http.Handler, *pgxpool.Pool, error) {
 	r.Post("/api/connections/{id}/ping", s.PingConnection)
 	r.Get("/api/connections/{id}/schema", s.GetConnectionSchema)
 	r.Post("/api/connections/{id}/query", s.RunConnectionQuery)
+	r.Post("/api/connections/{id}/update-cell", s.UpdateConnectionCell)
 	r.Get("/api/connections/{id}/redis/keys", s.ListRedisKeys)
 	r.Post("/api/connections/{id}/redis/keys", s.SaveRedisKey)
 	r.Put("/api/connections/{id}/redis/keys", s.SaveRedisKey)

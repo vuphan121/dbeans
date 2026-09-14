@@ -135,6 +135,23 @@ export function runQuery(token: string, id: string, sql: string): Promise<QueryR
   });
 }
 
+export interface UpdateCellInput {
+  schema: string;
+  table: string;
+  column: string;
+  value: string | null;
+  pkColumn: string;
+  pkValue: string;
+}
+
+export function updateCell(token: string, id: string, input: UpdateCellInput): Promise<{ ok: boolean; rowsAffected: number }> {
+  return request(`/api/connections/${id}/update-cell`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+}
+
 export function listRedisKeys(token: string, id: string, pattern = "*"): Promise<RedisKeyEntry[]> {
   return request(`/api/connections/${id}/redis/keys?pattern=${encodeURIComponent(pattern)}`, {
     headers: { Authorization: `Bearer ${token}` },

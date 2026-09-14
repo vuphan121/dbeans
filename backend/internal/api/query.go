@@ -28,6 +28,7 @@ type sqlConnFields struct {
 	Password              string `json:"password"`
 	SSLMode               string `json:"sslMode"`
 	ConnectTimeoutSeconds int    `json:"connectTimeoutSeconds"`
+	ReadOnly              bool   `json:"readOnly"`
 }
 
 func postgresDSN(f sqlConnFields) string {
@@ -91,7 +92,56 @@ func (s *Server) connectTarget(ctx context.Context, engine string, fields sqlCon
 type ColumnInfo struct {
 	Name         string `json:"name"`
 	Type         string `json:"type"`
-	IsPrimaryKey bool   `json:"isPrimaryKey,omitempty"` // only meaningful for schema introspection, always false on query results
+	IsPrimaryKey bool   `json:"isPrimaryKey,omitempty"`
+	// SourceSchema/SourceTable identify which real table a query-result
+	// column came from (resolved from pgconn.FieldDescription's TableOID —
+	// see RunConnectionQuery). Empty for computed expressions/aggregates,
+	// and always empty for schema-introspection ColumnInfo values.
+	SourceSchema string `json:"sourceSchema,omitempty"`
+	SourceTable  string `json:"sourceTable,omitempty"`
+}
+
+// tableKey identifies a table by schema+name — shared between schema
+// introspection (GetConnectionSchema) and query-result column provenance
+// (RunConnectionQuery's resolveTableOID/fetchPrimaryKeyColumns).
+type tableKey struct{ schema, name string }
+
+// resolveTableOID looks up which real table a pgconn.FieldDescription's
+// TableOID refers to. A zero OID (computed expression, aggregate, literal)
+// is the caller's responsibility to skip before calling this.
+func resolveTableOID(ctx context.Context, conn *pgx.Conn, oid uint32) (tableKey, error) {
+	var k tableKey
+	err := conn.QueryRow(ctx, `
+		SELECT n.nspname, c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE c.oid = $1`, oid).Scan(&k.schema, &k.name)
+	return k, err
+}
+
+// fetchPrimaryKeyColumns returns the primary-key column names of one table —
+// the same information GetConnectionSchema's bulk pkRows query computes for
+// every table at once, scoped here to a single table since a query result
+// only ever needs it for the handful of tables its columns came from.
+func fetchPrimaryKeyColumns(ctx context.Context, conn *pgx.Conn, k tableKey) (map[string]bool, error) {
+	rows, err := conn.Query(ctx, `
+		SELECT kcu.column_name
+		FROM information_schema.table_constraints tc
+		JOIN information_schema.key_column_usage kcu
+			ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+		WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_schema = $1 AND tc.table_name = $2`,
+		k.schema, k.name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	pk := map[string]bool{}
+	for rows.Next() {
+		var col string
+		if err := rows.Scan(&col); err != nil {
+			return nil, err
+		}
+		pk[col] = true
+	}
+	return pk, rows.Err()
 }
 
 type TableInfo struct {
@@ -150,7 +200,6 @@ func (s *Server) GetConnectionSchema(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), queryTimeout)
 	defer cancel()
 
-	type tableKey struct{ schema, name string }
 	order := []tableKey{}
 	kinds := map[tableKey]string{}
 
@@ -347,7 +396,17 @@ func (s *Server) RunConnectionQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// rows.FieldDescriptions() aliases the connection's own reusable read
+	// buffer — it is silently overwritten by the *next* query issued on this
+	// same *pgx.Conn (the provenance-resolution queries below), so every
+	// field it's needed for once resolved. Name/TableOID must be copied out
+	// now, not read again later.
+	type fieldMeta struct {
+		name     string
+		tableOID uint32
+	}
 	fieldDescs := rows.FieldDescriptions()
+	fieldMetas := make([]fieldMeta, len(fieldDescs))
 	typeMap := conn.TypeMap()
 	columns := make([]ColumnInfo, len(fieldDescs))
 	for i, fd := range fieldDescs {
@@ -356,6 +415,7 @@ func (s *Server) RunConnectionQuery(w http.ResponseWriter, r *http.Request) {
 			typeName = t.Name
 		}
 		columns[i] = ColumnInfo{Name: fd.Name, Type: typeName}
+		fieldMetas[i] = fieldMeta{name: fd.Name, tableOID: fd.TableOID}
 	}
 
 	resultRows := [][]*string{}
@@ -389,6 +449,35 @@ func (s *Server) RunConnectionQuery(w http.ResponseWriter, r *http.Request) {
 		rowCount = int(tag.RowsAffected())
 	}
 
+	// Column provenance (which real table/PK a column came from, for the
+	// results grid's inline-edit feature) needs its own round trips against
+	// pg_class/information_schema — only safe to run now that the query
+	// above's result set has been fully read and closed, since pgx only
+	// allows one query in flight per connection at a time.
+	type resolvedTable struct {
+		key tableKey
+		pk  map[string]bool
+	}
+	resolvedByOID := map[uint32]resolvedTable{}
+	for i, f := range fieldMetas {
+		if f.tableOID == 0 {
+			continue
+		}
+		resolved, ok := resolvedByOID[f.tableOID]
+		if !ok {
+			if key, rerr := resolveTableOID(ctx, conn, f.tableOID); rerr == nil {
+				pk, _ := fetchPrimaryKeyColumns(ctx, conn, key)
+				resolved = resolvedTable{key: key, pk: pk}
+			}
+			resolvedByOID[f.tableOID] = resolved
+		}
+		if resolved.key.name != "" {
+			columns[i].SourceSchema = resolved.key.schema
+			columns[i].SourceTable = resolved.key.name
+			columns[i].IsPrimaryKey = resolved.pk[f.name]
+		}
+	}
+
 	writeJSON(w, http.StatusOK, QueryResult{
 		Columns:    columns,
 		Rows:       resultRows,
@@ -397,4 +486,68 @@ func (s *Server) RunConnectionQuery(w http.ResponseWriter, r *http.Request) {
 		DurationMs: durationMs,
 		Command:    tag.String(),
 	})
+}
+
+type updateCellRequest struct {
+	Schema   string  `json:"schema"`
+	Table    string  `json:"table"`
+	Column   string  `json:"column"`
+	Value    *string `json:"value"`
+	PKColumn string  `json:"pkColumn"`
+	PKValue  string  `json:"pkValue"`
+}
+
+// UpdateConnectionCell applies one inline result-grid edit as a parameterized
+// UPDATE — a dedicated structured endpoint rather than letting the frontend
+// string-build an UPDATE from an arbitrary typed cell value, so the actual
+// value is always passed as a bind parameter, never interpolated into SQL.
+// Identifiers (schema/table/column names) come from RunConnectionQuery's own
+// column provenance, not free-typed user input, but are still passed through
+// pgx.Identifier.Sanitize() rather than trusted as pre-quoted.
+func (s *Server) UpdateConnectionCell(w http.ResponseWriter, r *http.Request) {
+	user, err := auth.Resolve(r.Context(), s.Pool, bearerToken(r))
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+
+	var req updateCellRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
+		req.Schema == "" || req.Table == "" || req.Column == "" || req.PKColumn == "" {
+		writeError(w, http.StatusBadRequest, "schema, table, column, and pkColumn are required")
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	engine, fields, err := s.loadTargetConnection(r.Context(), user.ID, id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "connection not found")
+		return
+	}
+	if fields.ReadOnly {
+		writeError(w, http.StatusForbidden, "this connection is read-only")
+		return
+	}
+
+	conn, err := s.connectTarget(r.Context(), engine, fields)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	defer conn.Close(r.Context())
+
+	ctx, cancel := context.WithTimeout(r.Context(), queryTimeout)
+	defer cancel()
+
+	stmt := fmt.Sprintf(`UPDATE %s SET %s = $1 WHERE %s = $2`,
+		pgx.Identifier{req.Schema, req.Table}.Sanitize(),
+		pgx.Identifier{req.Column}.Sanitize(),
+		pgx.Identifier{req.PKColumn}.Sanitize())
+
+	tag, err := conn.Exec(ctx, stmt, req.Value, req.PKValue)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "rowsAffected": tag.RowsAffected()})
 }

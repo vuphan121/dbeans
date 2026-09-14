@@ -128,7 +128,19 @@ export function SqlWorkbench({
                 </div>
               </div>
             ) : (
-              <ResultsGrid result={result} />
+              <ResultsGrid
+                result={result}
+                connectionId={connection.id}
+                readOnly={"readOnly" in connection.fields ? connection.fields.readOnly : true}
+                onEdited={(rowIndex, colIndex, value) =>
+                  setResultByTab((prev) => {
+                    const current = prev[activeTab.id];
+                    if (!current) return prev;
+                    const rows = current.rows.map((r, i) => (i === rowIndex ? r.map((c, j) => (j === colIndex ? value : c)) : r));
+                    return { ...prev, [activeTab.id]: { ...current, rows } };
+                  })
+                }
+              />
             )}
           </>
         )

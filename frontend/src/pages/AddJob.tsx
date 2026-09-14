@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { AlertCircle, Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -39,7 +39,9 @@ const WEBHOOK_METHOD_OPTIONS = ["GET", "POST", "PUT", "PATCH", "DELETE"].map((va
 export default function AddJob() {
   const navigate = useNavigate();
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
   const isEditing = !!id;
+  const typeFromUrl = searchParams.get("type") === "http_request" ? "http_request" : searchParams.get("type") === "query" ? "query" : null;
   const connections = useConnectionsStore((s) => s.connections);
   const jobs = useJobsStore((s) => s.jobs);
   const addJob = useJobsStore((s) => s.addJob);
@@ -53,7 +55,7 @@ export default function AddJob() {
   const sqlConnections = useMemo(() => connections.filter((c) => SQL_ENGINES.includes(c.engine)), [connections]);
 
   const [name, setName] = useState(existing?.name ?? "");
-  const [jobType, setJobType] = useState<JobType>(existing?.jobType ?? "query");
+  const [jobType, setJobType] = useState<JobType>(existing?.jobType ?? typeFromUrl ?? "query");
   const [connectionId, setConnectionId] = useState(existing?.connectionId ?? sqlConnections[0]?.id ?? "");
   const [sql, setSql] = useState(existing?.sql ?? "");
   const [requestUrl, setRequestUrl] = useState(existing?.config.url ?? "");
@@ -71,6 +73,12 @@ export default function AddJob() {
 
   const [testState, setTestState] = useState<"idle" | "testing" | "pass" | "fail">("idle");
   const [testMessage, setTestMessage] = useState("");
+
+  useEffect(() => {
+    if (!isEditing && !typeFromUrl) {
+      navigate("/jobs", { replace: true });
+    }
+  }, [isEditing, typeFromUrl, navigate]);
 
   useEffect(() => {
     if (existing) {
@@ -168,14 +176,20 @@ export default function AddJob() {
         </Field>
 
         <Field label="Job type">
-          <Select
-            value={jobType}
-            onChange={(value) => {
-              setJobType(value as JobType);
-              setTestState("idle");
-            }}
-            options={JOB_TYPE_OPTIONS}
-          />
+          {isEditing ? (
+            <Select
+              value={jobType}
+              onChange={(value) => {
+                setJobType(value as JobType);
+                setTestState("idle");
+              }}
+              options={JOB_TYPE_OPTIONS}
+            />
+          ) : (
+            <div className="rounded-[7px] border border-border-input bg-bg-inset px-[11px] py-2 text-[12.5px] text-text-secondary">
+              {JOB_TYPE_OPTIONS.find((o) => o.value === jobType)?.label}
+            </div>
+          )}
         </Field>
 
         {jobType === "query" ? (

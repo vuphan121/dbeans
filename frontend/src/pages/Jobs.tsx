@@ -15,15 +15,17 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Search, Plus } from "lucide-react";
+import { Search, Plus, Clock, Webhook } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/Button";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/DropdownMenu";
 import { useJobsStore } from "@/state/jobs";
 import { isTypingTarget } from "@/lib/platform";
 import { CANVAS_BOUNDS, FIELD_CENTER, GRID_UNIT, snapToGrid } from "@/lib/canvasBounds";
 import { JobCard } from "@/components/jobs/JobCard";
 import { shouldSuppressNodeClick } from "@/lib/contextMenuGuard";
+import type { JobType } from "@/lib/types";
 
 const nodeTypes = { jobCard: JobCard };
 
@@ -48,6 +50,12 @@ export default function Jobs() {
   const updateLayout = useJobsStore((s) => s.updateLayout);
   const [query, setQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [newJobMenuOpen, setNewJobMenuOpen] = useState(false);
+
+  function startNewJob(jobType: JobType) {
+    setNewJobMenuOpen(false);
+    navigate(`/jobs/new?type=${jobType}`);
+  }
 
   useEffect(() => {
     loadJobs();
@@ -154,7 +162,7 @@ export default function Jobs() {
     function onKeyDown(e: KeyboardEvent) {
       if (e.key.toLowerCase() === "n" && !e.metaKey && !e.ctrlKey && !e.altKey && !isTypingTarget(e.target)) {
         e.preventDefault();
-        navigate("/jobs/new");
+        setNewJobMenuOpen(true);
         return;
       }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
@@ -213,9 +221,23 @@ export default function Jobs() {
                     className="w-full bg-transparent text-[12.5px] text-text-primary placeholder:text-text-quiet outline-none"
                   />
                 </div>
-                <Button variant="primary" size="sm" onClick={() => navigate("/jobs/new")}>
-                  <Plus size={13} /> New job
-                </Button>
+                <DropdownMenu open={newJobMenuOpen} onOpenChange={setNewJobMenuOpen}>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="primary" size="sm">
+                      <Plus size={13} /> New job
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => startNewJob("query")} className="flex items-center gap-2">
+                      <Clock size={13} className="text-text-faint" />
+                      Scheduled query
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => startNewJob("http_request")} className="flex items-center gap-2">
+                      <Webhook size={13} className="text-text-faint" />
+                      HTTP request
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </Panel>
           </ReactFlow>

@@ -29,10 +29,10 @@ const CHECK_MODE_OPTIONS: { value: CheckMode; label: string }[] = [
   { value: "fail_if_rows", label: "Fail if the query returns any rows" },
 ];
 
-const JOB_TYPE_OPTIONS = [
-  { value: "query", label: "Query — run SQL against a saved connection" },
-  { value: "http_request", label: "HTTP request — call an API and ignore its response body" },
-];
+const JOB_TYPE_LABELS: Record<JobType, string> = {
+  query: "scheduled query",
+  http_request: "HTTP request",
+};
 
 const WEBHOOK_METHOD_OPTIONS = ["GET", "POST", "PUT", "PATCH", "DELETE"].map((value) => ({ value, label: value }));
 
@@ -168,28 +168,11 @@ export default function AddJob() {
     <div className="flex h-full items-center justify-center bg-bg-app p-8">
       <div className="flex max-h-full w-[680px] flex-col gap-5 overflow-y-auto rounded-xl border border-border-strong bg-bg-app p-8">
         <div className="text-[16px] font-semibold tracking-[-0.01em] text-text-primary">
-          {isEditing ? "Edit scheduled job" : "New job"}
+          {isEditing ? `Edit ${JOB_TYPE_LABELS[jobType]}` : `New ${JOB_TYPE_LABELS[jobType]}`}
         </div>
 
         <Field label="Name">
           <Input mono value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. nightly churn rollup" />
-        </Field>
-
-        <Field label="Job type">
-          {isEditing ? (
-            <Select
-              value={jobType}
-              onChange={(value) => {
-                setJobType(value as JobType);
-                setTestState("idle");
-              }}
-              options={JOB_TYPE_OPTIONS}
-            />
-          ) : (
-            <div className="rounded-[7px] border border-border-input bg-bg-inset px-[11px] py-2 text-[12.5px] text-text-secondary">
-              {JOB_TYPE_OPTIONS.find((o) => o.value === jobType)?.label}
-            </div>
-          )}
         </Field>
 
         {jobType === "query" ? (

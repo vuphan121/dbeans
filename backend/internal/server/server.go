@@ -85,6 +85,7 @@ func New(ctx context.Context) (http.Handler, *pgxpool.Pool, error) {
 	r.Post("/api/auth/login", s.Login)
 	r.Post("/api/auth/logout", s.Logout)
 	r.Get("/api/auth/me", s.Me)
+	r.Post("/api/auth/change-password", s.ChangePassword)
 	r.Post("/api/analytics/event", s.TrackEvent)
 
 	r.Get("/api/connections", s.ListConnections)

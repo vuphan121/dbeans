@@ -13,8 +13,10 @@ import (
 )
 
 var ErrInvalidCredentials = errors.New("invalid username or password")
+var ErrPasswordTooShort = errors.New("new password must be at least 12 characters")
 
 const sessionTTL = 30 * 24 * time.Hour
+const minPasswordLength = 12
 
 type User struct {
 	ID       int64
@@ -79,6 +81,31 @@ func Login(ctx context.Context, pool *pgxpool.Pool, username, password string) (
 
 func Logout(ctx context.Context, pool *pgxpool.Pool, token string) error {
 	_, err := pool.Exec(ctx, `DELETE FROM sessions WHERE token = $1`, token)
+	return err
+}
+
+// ChangePassword verifies currentPassword against the stored hash, then
+// replaces it with a hash of newPassword and signs the user out of every
+// other session (the caller's own token, passed as currentToken, is kept).
+func ChangePassword(ctx context.Context, pool *pgxpool.Pool, userID int64, currentToken, currentPassword, newPassword string) error {
+	if len(newPassword) < minPasswordLength {
+		return ErrPasswordTooShort
+	}
+	var hash string
+	if err := pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE id = $1`, userID).Scan(&hash); err != nil {
+		return err
+	}
+	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(currentPassword)) != nil {
+		return ErrInvalidCredentials
+	}
+	newHash, err := HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	if _, err := pool.Exec(ctx, `UPDATE users SET password_hash = $1 WHERE id = $2`, newHash, userID); err != nil {
+		return err
+	}
+	_, err = pool.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND token != $2`, userID, currentToken)
 	return err
 }
 

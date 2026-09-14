@@ -88,6 +88,37 @@ func (s *Server) Me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"username": user.Username})
 }
 
+type changePasswordRequest struct {
+	CurrentPassword string `json:"currentPassword"`
+	NewPassword     string `json:"newPassword"`
+}
+
+func (s *Server) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	token := bearerToken(r)
+	user, err := auth.Resolve(r.Context(), s.Pool, token)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+	var req changePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.CurrentPassword == "" || req.NewPassword == "" {
+		writeError(w, http.StatusBadRequest, "current and new password are required")
+		return
+	}
+	if err := auth.ChangePassword(r.Context(), s.Pool, user.ID, token, req.CurrentPassword, req.NewPassword); err != nil {
+		switch err {
+		case auth.ErrInvalidCredentials:
+			writeError(w, http.StatusBadRequest, "current password is incorrect")
+		case auth.ErrPasswordTooShort:
+			writeError(w, http.StatusBadRequest, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, "failed to change password")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 type eventRequest struct {
 	Type    string `json:"type"`
 	Payload any    `json:"payload"`

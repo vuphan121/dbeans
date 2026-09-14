@@ -51,6 +51,14 @@ export function me(token: string): Promise<{ username: string }> {
   return request("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } });
 }
 
+export function changePassword(token: string, currentPassword: string, newPassword: string): Promise<{ ok: boolean }> {
+  return request("/api/auth/change-password", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ currentPassword, newPassword }),
+  });
+}
+
 // Fire-and-forget analytics — a failure here should never surface to the user
 // or block whatever action triggered it.
 export function trackEvent(token: string, type: string, payload?: unknown): void {

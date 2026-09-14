@@ -6,7 +6,7 @@ import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { useSettingsStore } from "@/state/settings";
 import { useAuthStore } from "@/state/auth";
 import { comboLabel } from "@/lib/platform";
-import { getJobsTickInfo, API_URL } from "@/lib/api";
+import { getJobsTickInfo, changePassword, ApiError, API_URL } from "@/lib/api";
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -15,6 +15,8 @@ export default function Settings() {
   const [currentPw, setCurrentPw] = useState("");
   const [newPw, setNewPw] = useState("");
   const [pwMessage, setPwMessage] = useState<string | null>(null);
+  const [pwError, setPwError] = useState(false);
+  const [pwSaving, setPwSaving] = useState(false);
   const [tickUrl, setTickUrl] = useState<string | null>(null);
   const [tickUrlError, setTickUrlError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -40,12 +42,27 @@ export default function Settings() {
     });
   }
 
-  function handleUpdatePassword() {
-    // Login is real (backend + Postgres), but there's no change-password
-    // endpoint yet — this is the next piece of account settings to wire up.
-    setPwMessage("Password changes aren't wired up yet — coming with account settings.");
-    setCurrentPw("");
-    setNewPw("");
+  async function handleUpdatePassword() {
+    if (!token) return;
+    if (newPw.length < 12) {
+      setPwError(true);
+      setPwMessage("New password must be at least 12 characters.");
+      return;
+    }
+    setPwSaving(true);
+    setPwError(false);
+    setPwMessage(null);
+    try {
+      await changePassword(token, currentPw, newPw);
+      setPwMessage("Password updated. Other signed-in devices have been signed out.");
+      setCurrentPw("");
+      setNewPw("");
+    } catch (err) {
+      setPwError(true);
+      setPwMessage(err instanceof ApiError ? err.message : "Failed to update password.");
+    } finally {
+      setPwSaving(false);
+    }
   }
 
   function handleSignOut() {
@@ -110,13 +127,14 @@ export default function Settings() {
                   />
                 </Field>
               </div>
-              <div className="flex items-center justify-between">
-                <div className="text-[11.5px] text-text-faint">Changing this re-encrypts every stored credential.</div>
-                <Button variant="secondary" size="sm" onClick={handleUpdatePassword} disabled={!currentPw || !newPw}>
-                  Update password
+              <div className="flex items-center justify-end">
+                <Button variant="secondary" size="sm" onClick={handleUpdatePassword} disabled={!currentPw || !newPw || pwSaving}>
+                  {pwSaving ? "Updating…" : "Update password"}
                 </Button>
               </div>
-              {pwMessage && <div className="text-[11.5px] text-text-faint">{pwMessage}</div>}
+              {pwMessage && (
+                <div className={`text-[11.5px] ${pwError ? "text-error-text" : "text-text-faint"}`}>{pwMessage}</div>
+              )}
             </div>
           </Section>
 

@@ -152,6 +152,8 @@ export interface HttpRequestJobConfig {
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   headers: Record<string, string>;
   body: string;
+  /** If set, also fail the job when this top-level response JSON field is a non-empty array. */
+  failOnNonEmptyArrayField?: string;
 }
 
 export interface ScheduledJob {

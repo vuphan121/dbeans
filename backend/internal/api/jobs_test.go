@@ -91,6 +91,43 @@ func TestExecuteHTTPRequestJobSendsTemplatedRequestAndDiscardsResponse(t *testin
 	}
 }
 
+func TestExecuteHTTPRequestJobFailsOnNonEmptyArrayField(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"refreshed":[{"id":"a"}],"failed":[{"id":"b","reason":"boom"}]}`))
+	}))
+	defer server.Close()
+
+	config, err := json.Marshal(httpRequestJobConfig{
+		URL: server.URL, Method: http.MethodPost, FailOnNonEmptyArrayField: "failed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = executeHTTPRequestJob(context.Background(), config, time.Now())
+	if err == nil || !strings.Contains(err.Error(), "b: boom") {
+		t.Fatalf("error = %v, want it to mention the failed item", err)
+	}
+}
+
+func TestExecuteHTTPRequestJobIgnoresEmptyArrayField(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"refreshed":[{"id":"a"}],"failed":[]}`))
+	}))
+	defer server.Close()
+
+	config, err := json.Marshal(httpRequestJobConfig{
+		URL: server.URL, Method: http.MethodPost, FailOnNonEmptyArrayField: "failed",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := executeHTTPRequestJob(context.Background(), config, time.Now()); err != nil {
+		t.Fatalf("executeHTTPRequestJob() error = %v, want nil for empty failed[]", err)
+	}
+}
+
 func TestExecuteHTTPRequestJobRejectsNon2xx(t *testing.T) {
 	server := httptest.NewServer(http.NotFoundHandler())
 	defer server.Close()

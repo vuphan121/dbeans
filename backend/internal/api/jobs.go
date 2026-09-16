@@ -122,6 +122,12 @@ type httpRequestJobConfig struct {
 	Method  string            `json:"method"`
 	Headers map[string]string `json:"headers"`
 	Body    string            `json:"body"`
+	// FailOnNonEmptyArrayField, if set, additionally fails an otherwise-2xx
+	// response when this top-level JSON field in the response body is an
+	// array with at least one element — e.g. a batch endpoint that returns
+	// 200 with a body like {"failed": [...]} to report partial failures
+	// alongside its overall success.
+	FailOnNonEmptyArrayField string `json:"failOnNonEmptyArrayField,omitempty"`
 }
 
 func normalizeJobRequest(req *jobRequest) error {
@@ -158,6 +164,7 @@ func normalizeJobRequest(req *jobRequest) error {
 		if config.Headers == nil {
 			config.Headers = map[string]string{}
 		}
+		config.FailOnNonEmptyArrayField = strings.TrimSpace(config.FailOnNonEmptyArrayField)
 		req.Config, _ = json.Marshal(config)
 		req.ConnectionID = ""
 		req.SQL = ""
@@ -782,13 +789,82 @@ func executeHTTPRequestJob(ctx context.Context, rawConfig json.RawMessage, runDa
 		return err
 	}
 	defer resp.Body.Close()
-	// The response is deliberately not data for the job. Drain only a small
-	// amount so normal keep-alive connections can be reused, then discard it.
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64*1024))
+	// The response is deliberately not data for the job, beyond the optional
+	// array-field check below. Read a bounded amount so it's available for
+	// that check, then discard the rest so normal keep-alive connections can
+	// still be reused.
+	const maxInspectBytes = 64 * 1024
+	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, maxInspectBytes))
+	_, _ = io.Copy(io.Discard, resp.Body)
+
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("HTTP request returned %s", resp.Status)
 	}
+	if config.FailOnNonEmptyArrayField != "" {
+		if err := checkNonEmptyArrayField(bodyBytes, config.FailOnNonEmptyArrayField); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// checkNonEmptyArrayField fails the job if the named top-level field in a
+// JSON response body is present and is an array with at least one element.
+// A body that isn't a JSON object, or that doesn't have the field, or where
+// the field isn't an array, is treated as nothing to report — this is an
+// opt-in extra check layered on top of the status-code check, not a
+// replacement for it.
+func checkNonEmptyArrayField(body []byte, field string) error {
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil
+	}
+	raw, ok := parsed[field]
+	if !ok {
+		return nil
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(raw, &items); err != nil || len(items) == 0 {
+		return nil
+	}
+	return fmt.Errorf("response field %q was non-empty (%d item(s)): %s", field, len(items), summarizeArrayItems(items))
+}
+
+// summarizeArrayItems renders a short, human-readable summary of failed
+// entries for the job's error message — pulling out common "name"/"id" +
+// "reason" shaped fields when present, falling back to the raw JSON element
+// otherwise, and capping how many are listed so one giant array doesn't blow
+// up the stored error message.
+func summarizeArrayItems(items []json.RawMessage) string {
+	const maxShown = 5
+	parts := make([]string, 0, len(items))
+	for i, raw := range items {
+		if i >= maxShown {
+			parts = append(parts, fmt.Sprintf("… +%d more", len(items)-maxShown))
+			break
+		}
+		var obj map[string]any
+		label := ""
+		if err := json.Unmarshal(raw, &obj); err == nil {
+			if v, ok := obj["name"]; ok {
+				label = fmt.Sprint(v)
+			} else if v, ok := obj["id"]; ok {
+				label = fmt.Sprint(v)
+			}
+			if reason, ok := obj["reason"]; ok {
+				if label != "" {
+					label += ": " + fmt.Sprint(reason)
+				} else {
+					label = fmt.Sprint(reason)
+				}
+			}
+		}
+		if label == "" {
+			label = string(raw)
+		}
+		parts = append(parts, label)
+	}
+	return strings.Join(parts, "; ")
 }
 
 func errCheckFailed(msg string) error { return errors.New(msg) }

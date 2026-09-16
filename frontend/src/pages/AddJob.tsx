@@ -64,6 +64,7 @@ export default function AddJob() {
     Object.keys(existing?.config.headers ?? {}).length > 0 ? JSON.stringify(existing?.config.headers, null, 2) : "{}",
   );
   const [requestBody, setRequestBody] = useState(existing?.config.body ?? "");
+  const [failOnField, setFailOnField] = useState(existing?.config.failOnNonEmptyArrayField ?? "");
   const [cronExpr, setCronExpr] = useState(existing?.cronExpr ?? CRON_PRESETS[0].value);
   const [dependsOn, setDependsOn] = useState<string[]>(existing?.dependsOn ?? []);
   const [retryLimit, setRetryLimit] = useState(String(existing?.retryLimit ?? 0));
@@ -90,6 +91,7 @@ export default function AddJob() {
       setRequestMethod(existing.config.method ?? "POST");
       setRequestHeaders(Object.keys(existing.config.headers ?? {}).length > 0 ? JSON.stringify(existing.config.headers, null, 2) : "{}");
       setRequestBody(existing.config.body ?? "");
+      setFailOnField(existing.config.failOnNonEmptyArrayField ?? "");
       setCronExpr(existing.cronExpr);
       setDependsOn(existing.dependsOn);
       setRetryLimit(String(existing.retryLimit));
@@ -129,7 +131,13 @@ export default function AddJob() {
         if (!parsed || Array.isArray(parsed) || typeof parsed !== "object" || Object.values(parsed).some((value) => typeof value !== "string")) {
           throw new Error("Headers must be a JSON object whose values are strings");
         }
-        config = { url: requestUrl.trim(), method: requestMethod, headers: parsed as Record<string, string>, body: requestBody };
+        config = {
+          url: requestUrl.trim(),
+          method: requestMethod,
+          headers: parsed as Record<string, string>,
+          body: requestBody,
+          failOnNonEmptyArrayField: failOnField.trim() || undefined,
+        };
       } catch (err) {
         setTestState("fail");
         setTestMessage(err instanceof Error ? err.message : "Headers must be valid JSON");
@@ -237,6 +245,17 @@ export default function AddJob() {
                 placeholder={'{\n  "date": "{{date}}"\n}'}
                 className="w-full resize-y rounded-[7px] border border-border-input bg-bg-inset px-[11px] py-2 font-mono text-[12px] leading-relaxed text-text-primary outline-none focus:border-border-focus"
               />
+            </Field>
+            <Field label="Fail if response field is a non-empty array (optional)">
+              <Input
+                mono
+                value={failOnField}
+                onChange={(e) => setFailOnField(e.target.value)}
+                placeholder="e.g. failed"
+              />
+              <div className="text-[11px] text-text-faint">
+                Catches a 2xx response that still reports partial failures, e.g. {"{ \"failed\": [...] }"}.
+              </div>
             </Field>
           </>
         )}

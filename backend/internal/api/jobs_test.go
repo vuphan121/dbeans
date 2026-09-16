@@ -128,6 +128,44 @@ func TestExecuteHTTPRequestJobIgnoresEmptyArrayField(t *testing.T) {
 	}
 }
 
+func TestExecuteHTTPRequestJobRespectsCustomTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	config, err := json.Marshal(httpRequestJobConfig{URL: server.URL, Method: http.MethodPost, TimeoutSeconds: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := executeHTTPRequestJob(context.Background(), config, time.Now()); err != nil {
+		t.Fatalf("executeHTTPRequestJob() error = %v, want nil with a 1s timeout for a 50ms response", err)
+	}
+
+	config, err = json.Marshal(httpRequestJobConfig{URL: server.URL, Method: http.MethodPost, TimeoutSeconds: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := executeHTTPRequestJob(context.Background(), config, time.Now()); err != nil {
+		t.Fatalf("executeHTTPRequestJob() error = %v, want nil for default timeout", err)
+	}
+}
+
+func TestNormalizeHTTPRequestJobRequestClampsTimeout(t *testing.T) {
+	req := jobRequest{JobType: "http_request", Config: json.RawMessage(`{"url":"https://example.com","timeoutSeconds":99999}`)}
+	if err := normalizeJobRequest(&req); err != nil {
+		t.Fatalf("normalizeJobRequest() error = %v", err)
+	}
+	var config httpRequestJobConfig
+	if err := json.Unmarshal(req.Config, &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.TimeoutSeconds != maxHTTPRequestTimeoutSeconds {
+		t.Fatalf("TimeoutSeconds = %d, want clamped to %d", config.TimeoutSeconds, maxHTTPRequestTimeoutSeconds)
+	}
+}
+
 func TestExecuteHTTPRequestJobRejectsNon2xx(t *testing.T) {
 	server := httptest.NewServer(http.NotFoundHandler())
 	defer server.Close()

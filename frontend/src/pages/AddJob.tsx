@@ -65,6 +65,7 @@ export default function AddJob() {
   );
   const [requestBody, setRequestBody] = useState(existing?.config.body ?? "");
   const [failOnField, setFailOnField] = useState(existing?.config.failOnNonEmptyArrayField ?? "");
+  const [timeoutSeconds, setTimeoutSeconds] = useState(existing?.config.timeoutSeconds ? String(existing.config.timeoutSeconds) : "");
   const [cronExpr, setCronExpr] = useState(existing?.cronExpr ?? CRON_PRESETS[0].value);
   const [dependsOn, setDependsOn] = useState<string[]>(existing?.dependsOn ?? []);
   const [retryLimit, setRetryLimit] = useState(String(existing?.retryLimit ?? 0));
@@ -92,6 +93,7 @@ export default function AddJob() {
       setRequestHeaders(Object.keys(existing.config.headers ?? {}).length > 0 ? JSON.stringify(existing.config.headers, null, 2) : "{}");
       setRequestBody(existing.config.body ?? "");
       setFailOnField(existing.config.failOnNonEmptyArrayField ?? "");
+      setTimeoutSeconds(existing.config.timeoutSeconds ? String(existing.config.timeoutSeconds) : "");
       setCronExpr(existing.cronExpr);
       setDependsOn(existing.dependsOn);
       setRetryLimit(String(existing.retryLimit));
@@ -137,6 +139,7 @@ export default function AddJob() {
           headers: parsed as Record<string, string>,
           body: requestBody,
           failOnNonEmptyArrayField: failOnField.trim() || undefined,
+          timeoutSeconds: Number(timeoutSeconds) || undefined,
         };
       } catch (err) {
         setTestState("fail");
@@ -256,6 +259,15 @@ export default function AddJob() {
               <div className="text-[11px] text-text-faint">
                 Catches a 2xx response that still reports partial failures, e.g. {"{ \"failed\": [...] }"}.
               </div>
+            </Field>
+            <Field label="Request timeout in seconds (optional)">
+              <Input
+                mono
+                value={timeoutSeconds}
+                onChange={(e) => setTimeoutSeconds(e.target.value.replace(/\D/g, ""))}
+                placeholder="20 (default)"
+              />
+              <div className="text-[11px] text-text-faint">Raise this for a slow or cold-starting endpoint.</div>
             </Field>
           </>
         )}

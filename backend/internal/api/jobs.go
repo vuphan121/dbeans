@@ -128,7 +128,15 @@ type httpRequestJobConfig struct {
 	// 200 with a body like {"failed": [...]} to report partial failures
 	// alongside its overall success.
 	FailOnNonEmptyArrayField string `json:"failOnNonEmptyArrayField,omitempty"`
+	// TimeoutSeconds overrides the default request timeout (queryTimeout) for
+	// this job. Some webhooks — e.g. one fronted by a cold-starting free-tier
+	// host — legitimately need longer than the default query timeout allows.
+	// 0 (the zero value, and every pre-existing job's config) means "use the
+	// default".
+	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
 }
+
+const maxHTTPRequestTimeoutSeconds = 280
 
 func normalizeJobRequest(req *jobRequest) error {
 	if req.JobType == "" {
@@ -165,6 +173,9 @@ func normalizeJobRequest(req *jobRequest) error {
 			config.Headers = map[string]string{}
 		}
 		config.FailOnNonEmptyArrayField = strings.TrimSpace(config.FailOnNonEmptyArrayField)
+		if config.TimeoutSeconds > 0 {
+			config.TimeoutSeconds = clampInt(config.TimeoutSeconds, 5, maxHTTPRequestTimeoutSeconds)
+		}
 		req.Config, _ = json.Marshal(config)
 		req.ConnectionID = ""
 		req.SQL = ""
@@ -769,7 +780,11 @@ func executeHTTPRequestJob(ctx context.Context, rawConfig json.RawMessage, runDa
 	if method == "" {
 		method = http.MethodPost
 	}
-	runCtx, cancel := context.WithTimeout(ctx, queryTimeout)
+	timeout := queryTimeout
+	if config.TimeoutSeconds > 0 {
+		timeout = time.Duration(config.TimeoutSeconds) * time.Second
+	}
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(
 		runCtx,
@@ -783,7 +798,7 @@ func executeHTTPRequestJob(ctx context.Context, rawConfig json.RawMessage, runDa
 	for name, value := range config.Headers {
 		req.Header.Set(name, renderJobTemplate(value, runDate))
 	}
-	client := &http.Client{Timeout: queryTimeout}
+	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
 	if err != nil {
 		return err

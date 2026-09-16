@@ -154,6 +154,8 @@ export interface HttpRequestJobConfig {
   body: string;
   /** If set, also fail the job when this top-level response JSON field is a non-empty array. */
   failOnNonEmptyArrayField?: string;
+  /** Overrides the default request timeout (seconds) for this job. */
+  timeoutSeconds?: number;
 }
 
 export interface ScheduledJob {

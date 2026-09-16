@@ -65,6 +65,16 @@
   /* inverse (buttons on light-colored fill, e.g. primary CTA) */
   --color-inverse-bg: #ededef;
   --color-inverse-text: #09090b;
+
+  /* {{...}} template placeholders outside the SQL editor (see
+     components/jobs/TemplateField.tsx) — the SQL editor's own {{date}}/
+     secret coloring (components/workbench/sqlEditorTheme.ts) is defined
+     separately since it already branches per-theme internally; these tokens
+     let a plain CSS-var-driven theme (no JS light/dark branching) match it. */
+  --color-template-var: #d7b8f3;
+  --color-template-var-bg: rgba(199, 146, 234, 0.14);
+  --color-template-var-secret: #8ecdf0;
+  --color-template-var-secret-bg: rgba(96, 181, 230, 0.14);
 }
 
 [data-theme="light"] {
@@ -114,6 +124,11 @@
 
   --color-inverse-bg: #18181b;
   --color-inverse-text: #fafafa;
+
+  --color-template-var: #7c3aed;
+  --color-template-var-bg: rgba(124, 58, 237, 0.09);
+  --color-template-var-secret: #0284c7;
+  --color-template-var-secret-bg: rgba(2, 132, 199, 0.09);
 }
 
 html,

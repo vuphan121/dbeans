@@ -21,6 +21,8 @@ const dark = {
   tooltipHeaderBg: "#1c1c20",
   templateVar: "#d7b8f3",
   templateVarBg: "rgba(199,146,234,0.14)",
+  templateVarSecret: "#8ecdf0",
+  templateVarSecretBg: "rgba(96,181,230,0.14)",
 };
 
 const light = {
@@ -41,6 +43,8 @@ const light = {
   tooltipHeaderBg: "#f2f2f3",
   templateVar: "#7c3aed",
   templateVarBg: "rgba(124,58,237,0.09)",
+  templateVarSecret: "#0284c7",
+  templateVarSecretBg: "rgba(2,132,199,0.09)",
 };
 
 function buildTheme(c: typeof dark) {
@@ -96,6 +100,14 @@ function buildTheme(c: typeof dark) {
       ".cm-template-var": {
         color: c.templateVar,
         backgroundColor: c.templateVarBg,
+        borderRadius: "4px",
+        padding: "1px 2px",
+        fontWeight: "600",
+      },
+      // Vault secret references like {{API_TOKEN}} — see templateHighlight.ts.
+      ".cm-template-var-secret": {
+        color: c.templateVarSecret,
+        backgroundColor: c.templateVarSecretBg,
         borderRadius: "4px",
         padding: "1px 2px",
         fontWeight: "600",

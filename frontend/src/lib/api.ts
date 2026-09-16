@@ -10,6 +10,7 @@ import type {
   RedisKeyEntry,
   SavedConnection,
   ScheduledJob,
+  Secret,
 } from "@/lib/types";
 
 export const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8080";
@@ -127,11 +128,11 @@ export function getConnectionSchema(token: string, id: string): Promise<Connecti
   return request(`/api/connections/${id}/schema`, { headers: { Authorization: `Bearer ${token}` } });
 }
 
-export function runQuery(token: string, id: string, sql: string): Promise<QueryResult> {
+export function runQuery(token: string, id: string, sql: string, renderTemplate?: boolean): Promise<QueryResult> {
   return request(`/api/connections/${id}/query`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ sql }),
+    body: JSON.stringify({ sql, renderTemplate: renderTemplate || undefined }),
   });
 }
 
@@ -260,6 +261,31 @@ export function runJobNow(
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify({ date: options?.date || undefined, downstream: options?.downstream || undefined }),
   }).then((res) => ("runs" in res ? res.runs : [res]));
+}
+
+export function listSecrets(token: string): Promise<Secret[]> {
+  return request("/api/secrets", { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export function createSecret(token: string, secret: { id: string; name: string; value: string }): Promise<Secret> {
+  return request("/api/secrets", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(secret),
+  });
+}
+
+// value, if omitted/empty, keeps the existing encrypted value and only renames.
+export function updateSecret(token: string, id: string, update: { name: string; value?: string }): Promise<{ ok: boolean }> {
+  return request(`/api/secrets/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(update),
+  });
+}
+
+export function deleteSecret(token: string, id: string): Promise<{ ok: boolean }> {
+  return request(`/api/secrets/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
 }
 
 export function listJobRuns(token: string, id: string): Promise<JobRun[]> {

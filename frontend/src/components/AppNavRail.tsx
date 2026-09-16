@@ -1,6 +1,6 @@
 import * as Collapsible from "@radix-ui/react-collapsible";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Database, Clock, Settings as SettingsIcon, ChevronsLeft, ChevronsRight } from "lucide-react";
+import { Database, Clock, KeyRound, Settings as SettingsIcon, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { LogoMark } from "@/components/Logo";
 import { useSettingsStore } from "@/state/settings";
 import { cn } from "@/lib/utils";
@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 const NAV_ITEMS = [
   { to: "/connections", label: "Connections", icon: Database },
   { to: "/jobs", label: "Scheduled jobs", icon: Clock },
+  { to: "/secrets", label: "Secrets", icon: KeyRound },
   { to: "/settings", label: "Settings", icon: SettingsIcon },
 ];
 

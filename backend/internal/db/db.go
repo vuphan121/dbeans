@@ -145,6 +145,23 @@ CREATE TABLE IF NOT EXISTS job_queue (
 	UNIQUE (job_id, run_date)
 );
 
+-- secrets is a per-user vault of named values (env-var-style: CHESSLAB_URL,
+-- API_TOKEN, ...) referenced from query/HTTP job config as {{name}}, resolved
+-- alongside {{date}} by renderJobTemplate at run time (see jobs.go). Values
+-- are AES-256-GCM-encrypted with the same key as connections' credentials
+-- (CONNECTION_ENCRYPTION_KEY, see internal/crypto) — this table just reuses
+-- it rather than needing a key of its own. Deliberately write-only from the
+-- API's point of view: value_enc is never decoded back into an API response,
+-- only decrypted server-side when resolving a template.
+CREATE TABLE IF NOT EXISTS secrets (
+	id TEXT PRIMARY KEY,
+	user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	value_enc BYTEA NOT NULL,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	UNIQUE (user_id, name)
+);
+
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_analytics_events_user_id ON analytics_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_analytics_events_created_at ON analytics_events(created_at DESC);
@@ -154,6 +171,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_next_run_at ON jobs(next_run_at) WHERE enabl
 CREATE INDEX IF NOT EXISTS idx_job_runs_job_id ON job_runs(job_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_job_runs_run_date ON job_runs(job_id, run_date DESC);
 CREATE INDEX IF NOT EXISTS idx_job_queue_job_id ON job_queue(job_id);
+CREATE INDEX IF NOT EXISTS idx_secrets_user_id ON secrets(user_id);
 `
 
 func Migrate(ctx context.Context, pool *pgxpool.Pool) error {

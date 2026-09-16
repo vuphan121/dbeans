@@ -11,6 +11,57 @@ import (
 	"time"
 )
 
+func TestRenderJobTemplateResolvesSecret(t *testing.T) {
+	got := renderJobTemplate("token={{API_TOKEN}}", time.Now(), map[string]string{"API_TOKEN": "s3cr3t"})
+	if got != "token=s3cr3t" {
+		t.Fatalf("renderJobTemplate() = %q, want token=s3cr3t", got)
+	}
+}
+
+func TestRenderJobTemplateLeavesUnknownTokenLiteral(t *testing.T) {
+	got := renderJobTemplate("id={{NOT_A_SECRET}}", time.Now(), map[string]string{"OTHER": "x"})
+	if got != "id={{NOT_A_SECRET}}" {
+		t.Fatalf("renderJobTemplate() = %q, want the token left untouched", got)
+	}
+}
+
+func TestRenderJobTemplateDateTakesPrecedenceOverSecrets(t *testing.T) {
+	now := time.Date(2026, time.September, 16, 12, 0, 0, 0, time.UTC)
+	got := renderJobTemplate("{{date}}", now, map[string]string{"date": "should never win"})
+	if got != "2026-09-16" {
+		t.Fatalf("renderJobTemplate() = %q, want the reserved date placeholder to win", got)
+	}
+}
+
+func TestExecuteHTTPRequestJobResolvesSecretsInURLAndHeaders(t *testing.T) {
+	var gotURL, gotHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotURL = r.URL.String()
+		gotHeader = r.Header.Get("X-Cron-Secret")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	config, err := json.Marshal(httpRequestJobConfig{
+		URL:     server.URL + "/run?token={{API_TOKEN}}",
+		Method:  http.MethodPost,
+		Headers: map[string]string{"X-Cron-Secret": "{{API_TOKEN}}"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secrets := map[string]string{"API_TOKEN": "s3cr3t"}
+	if err := executeHTTPRequestJob(context.Background(), config, time.Now(), secrets); err != nil {
+		t.Fatalf("executeHTTPRequestJob() error = %v", err)
+	}
+	if gotURL != "/run?token=s3cr3t" {
+		t.Fatalf("request URL = %q, want the secret substituted", gotURL)
+	}
+	if gotHeader != "s3cr3t" {
+		t.Fatalf("X-Cron-Secret header = %q, want the secret substituted", gotHeader)
+	}
+}
+
 func TestNormalizeJobRequestDefaultsLegacyQuery(t *testing.T) {
 	req := jobRequest{ConnectionID: "connection-1", SQL: "select 1"}
 	if err := normalizeJobRequest(&req); err != nil {
@@ -83,7 +134,7 @@ func TestExecuteHTTPRequestJobSendsTemplatedRequestAndDiscardsResponse(t *testin
 		t.Fatal(err)
 	}
 	runDate := time.Date(2026, time.September, 14, 8, 30, 0, 0, time.FixedZone("test", 7*60*60))
-	if err := executeHTTPRequestJob(context.Background(), config, runDate); err != nil {
+	if err := executeHTTPRequestJob(context.Background(), config, runDate, nil); err != nil {
 		t.Fatalf("executeHTTPRequestJob() error = %v", err)
 	}
 	if !received {
@@ -104,7 +155,7 @@ func TestExecuteHTTPRequestJobFailsOnNonEmptyArrayField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = executeHTTPRequestJob(context.Background(), config, time.Now())
+	err = executeHTTPRequestJob(context.Background(), config, time.Now(), nil)
 	if err == nil || !strings.Contains(err.Error(), "b: boom") {
 		t.Fatalf("error = %v, want it to mention the failed item", err)
 	}
@@ -123,7 +174,7 @@ func TestExecuteHTTPRequestJobIgnoresEmptyArrayField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := executeHTTPRequestJob(context.Background(), config, time.Now()); err != nil {
+	if err := executeHTTPRequestJob(context.Background(), config, time.Now(), nil); err != nil {
 		t.Fatalf("executeHTTPRequestJob() error = %v, want nil for empty failed[]", err)
 	}
 }
@@ -139,7 +190,7 @@ func TestExecuteHTTPRequestJobRespectsCustomTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := executeHTTPRequestJob(context.Background(), config, time.Now()); err != nil {
+	if err := executeHTTPRequestJob(context.Background(), config, time.Now(), nil); err != nil {
 		t.Fatalf("executeHTTPRequestJob() error = %v, want nil with a 1s timeout for a 50ms response", err)
 	}
 
@@ -147,7 +198,7 @@ func TestExecuteHTTPRequestJobRespectsCustomTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := executeHTTPRequestJob(context.Background(), config, time.Now()); err != nil {
+	if err := executeHTTPRequestJob(context.Background(), config, time.Now(), nil); err != nil {
 		t.Fatalf("executeHTTPRequestJob() error = %v, want nil for default timeout", err)
 	}
 }
@@ -173,7 +224,7 @@ func TestExecuteHTTPRequestJobRejectsNon2xx(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = executeHTTPRequestJob(context.Background(), config, time.Now())
+	err = executeHTTPRequestJob(context.Background(), config, time.Now(), nil)
 	if err == nil || !strings.Contains(err.Error(), "404 Not Found") {
 		t.Fatalf("error = %v, want 404 status", err)
 	}

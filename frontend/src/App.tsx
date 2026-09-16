@@ -7,10 +7,12 @@ import Workbench from "@/pages/Workbench";
 import Settings from "@/pages/Settings";
 import Jobs from "@/pages/Jobs";
 import AddJob from "@/pages/AddJob";
+import Secrets from "@/pages/Secrets";
 import { AppNavRail } from "@/components/AppNavRail";
 import { useAuthStore } from "@/state/auth";
 import { useConnectionsStore } from "@/state/connections";
 import { useJobsStore } from "@/state/jobs";
+import { useSecretsStore } from "@/state/secrets";
 import { applyThemeToDocument, useSettingsStore, watchSystemTheme } from "@/state/settings";
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -30,6 +32,7 @@ export default function App() {
   const { restoreSession, isUnlocked, token } = useAuthStore();
   const loadConnections = useConnectionsStore((s) => s.loadConnections);
   const loadJobs = useJobsStore((s) => s.loadJobs);
+  const loadSecrets = useSecretsStore((s) => s.loadSecrets);
 
   useEffect(() => {
     watchSystemTheme();
@@ -44,8 +47,9 @@ export default function App() {
     if (isUnlocked && token) {
       loadConnections();
       loadJobs();
+      loadSecrets();
     }
-  }, [isUnlocked, token, loadConnections, loadJobs]);
+  }, [isUnlocked, token, loadConnections, loadJobs, loadSecrets]);
 
   return (
     <BrowserRouter>
@@ -104,6 +108,14 @@ export default function App() {
           element={
             <RequireAuth>
               <AddJob />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/secrets"
+          element={
+            <RequireAuth>
+              <Secrets />
             </RequireAuth>
           }
         />

@@ -177,6 +177,14 @@ export interface ScheduledJob {
   lastStatus: JobStatus;
 }
 
+// Write-only by design — the API never echoes a value back once saved,
+// only ever the name (see docs/ARCHITECTURE.md §4).
+export interface Secret {
+  id: string;
+  name: string;
+  createdAt: string;
+}
+
 export interface JobRun {
   id: number;
   jobId: string;

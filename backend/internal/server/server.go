@@ -125,6 +125,11 @@ func New(ctx context.Context) (http.Handler, *pgxpool.Pool, error) {
 	r.Get("/api/jobs/tick", s.JobsTick)
 	r.Get("/api/jobs/tick-info", s.JobsTickInfo)
 
+	r.Get("/api/secrets", s.ListSecrets)
+	r.Post("/api/secrets", s.CreateSecret)
+	r.Patch("/api/secrets/{id}", s.UpdateSecret)
+	r.Delete("/api/secrets/{id}", s.DeleteSecret)
+
 	return r, pool, nil
 }
 

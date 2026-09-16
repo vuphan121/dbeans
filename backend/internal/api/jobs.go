@@ -542,8 +542,14 @@ func (s *Server) RunJobNow(w http.ResponseWriter, r *http.Request) {
 		triggeredBy = "backfill"
 	}
 
+	secrets, err := loadUserSecrets(r.Context(), s.Pool, user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load secrets")
+		return
+	}
+
 	if !req.Downstream {
-		run := s.executeJob(r.Context(), user.ID, j, triggeredBy, runDate)
+		run := s.executeJob(r.Context(), user.ID, j, triggeredBy, runDate, secrets)
 		writeJSON(w, http.StatusOK, run)
 		return
 	}
@@ -553,7 +559,7 @@ func (s *Server) RunJobNow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load jobs")
 		return
 	}
-	runs := s.runJobDownstream(r.Context(), user.ID, j, triggeredBy, runDate, allJobs, map[string]bool{})
+	runs := s.runJobDownstream(r.Context(), user.ID, j, triggeredBy, runDate, allJobs, map[string]bool{}, secrets)
 	writeJSON(w, http.StatusOK, map[string]any{"runs": runs})
 }
 
@@ -562,7 +568,7 @@ func (s *Server) RunJobNow(w http.ResponseWriter, r *http.Request) {
 // bookkeeping. Shared by the tick endpoint and "Run now"/"Backfill" actions.
 // runDate is the logical date {{date}} etc. resolve to — "now" for a normal
 // run, or a past/future date for a backfill.
-func (s *Server) executeJob(ctx context.Context, userID int64, j Job, triggeredBy string, runDate time.Time) JobRun {
+func (s *Server) executeJob(ctx context.Context, userID int64, j Job, triggeredBy string, runDate time.Time, secrets map[string]string) JobRun {
 	started := time.Now()
 	run := JobRun{JobID: j.ID, TriggeredBy: triggeredBy, RunDate: runDate.Format(dateOnlyLayout), StartedAt: started, Attempts: 0}
 
@@ -585,7 +591,7 @@ func (s *Server) executeJob(ctx context.Context, userID int64, j Job, triggeredB
 		var lastErr error
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
 			run.Attempts = attempt
-			rowCount, execErr := s.executeJobAction(ctx, userID, j, runDate)
+			rowCount, execErr := s.executeJobAction(ctx, userID, j, runDate, secrets)
 			if execErr == nil {
 				if j.CheckMode == "fail_if_no_rows" && rowCount == 0 {
 					execErr = errCheckFailed("check failed: expected at least one row, got 0")
@@ -668,14 +674,14 @@ func (s *Server) loadUserJobs(ctx context.Context, userID int64) ([]Job, error) 
 // running that shared job twice.
 func (s *Server) runJobDownstream(
 	ctx context.Context, userID int64, job Job, triggeredBy string, runDate time.Time,
-	allJobs []Job, visited map[string]bool,
+	allJobs []Job, visited map[string]bool, secrets map[string]string,
 ) []JobRun {
 	if visited[job.ID] {
 		return nil
 	}
 	visited[job.ID] = true
 
-	run := s.executeJob(ctx, userID, job, triggeredBy, runDate)
+	run := s.executeJob(ctx, userID, job, triggeredBy, runDate, secrets)
 	runs := []JobRun{run}
 	if run.Status != "success" {
 		return runs
@@ -690,7 +696,7 @@ func (s *Server) runJobDownstream(
 			}
 		}
 		if dependsOnThis {
-			runs = append(runs, s.runJobDownstream(ctx, userID, candidate, triggeredBy, runDate, allJobs, visited)...)
+			runs = append(runs, s.runJobDownstream(ctx, userID, candidate, triggeredBy, runDate, allJobs, visited, secrets)...)
 		}
 	}
 	return runs
@@ -702,13 +708,22 @@ func (s *Server) runJobDownstream(
 // '{{date+7}}' for a week out) instead of a hardcoded date. Substitution
 // happens right before execution (both scheduled ticks and manual "Run now"
 // go through here), always in UTC to match the rest of the backend.
+//
+// Any other {{name}} is resolved against the caller's secrets vault (see
+// secrets.go's loadUserSecrets) instead — the same {{...}} syntax covers
+// both built-in date placeholders and user-defined named secrets, matched
+// against the name exactly as typed (case-sensitive) rather than the
+// lowercased form date/datetime are checked against. A name that's neither a
+// reserved date placeholder nor a known secret is left untouched, same as
+// always (preserves existing behavior for a typo'd or unrelated {{...}}).
 var jobTemplateVarPattern = regexp.MustCompile(`\{\{\s*(\w+)\s*([+-]\s*\d+)?\s*\}\}`)
 
-func renderJobTemplate(sql string, now time.Time) string {
+func renderJobTemplate(sql string, now time.Time, secrets map[string]string) string {
 	now = now.UTC()
 	return jobTemplateVarPattern.ReplaceAllStringFunc(sql, func(match string) string {
 		groups := jobTemplateVarPattern.FindStringSubmatch(match)
-		name := strings.ToLower(groups[1])
+		rawName := groups[1]
+		name := strings.ToLower(rawName)
 		offsetDays := 0
 		if offsetStr := strings.ReplaceAll(groups[2], " ", ""); offsetStr != "" {
 			if n, err := strconv.Atoi(offsetStr); err == nil {
@@ -722,23 +737,26 @@ func renderJobTemplate(sql string, now time.Time) string {
 		case "datetime":
 			return t.Format("2006-01-02 15:04:05")
 		default:
+			if value, ok := secrets[rawName]; ok {
+				return value
+			}
 			return match
 		}
 	})
 }
 
-func (s *Server) executeJobAction(ctx context.Context, userID int64, j Job, runDate time.Time) (int, error) {
+func (s *Server) executeJobAction(ctx context.Context, userID int64, j Job, runDate time.Time, secrets map[string]string) (int, error) {
 	switch j.JobType {
 	case "", "query":
-		return s.executeJobQuery(ctx, userID, j, runDate)
+		return s.executeJobQuery(ctx, userID, j, runDate, secrets)
 	case "http_request":
-		return 0, executeHTTPRequestJob(ctx, j.Config, runDate)
+		return 0, executeHTTPRequestJob(ctx, j.Config, runDate, secrets)
 	default:
 		return 0, fmt.Errorf("unsupported job type %q", j.JobType)
 	}
 }
 
-func (s *Server) executeJobQuery(ctx context.Context, userID int64, j Job, runDate time.Time) (int, error) {
+func (s *Server) executeJobQuery(ctx context.Context, userID int64, j Job, runDate time.Time, secrets map[string]string) (int, error) {
 	engine, fields, err := s.loadTargetConnection(ctx, userID, j.ConnectionID)
 	if err != nil {
 		return 0, err
@@ -752,7 +770,7 @@ func (s *Server) executeJobQuery(ctx context.Context, userID int64, j Job, runDa
 	runCtx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	rows, err := conn.Query(runCtx, renderJobTemplate(j.SQL, runDate))
+	rows, err := conn.Query(runCtx, renderJobTemplate(j.SQL, runDate, secrets))
 	if err != nil {
 		return 0, err
 	}
@@ -771,7 +789,7 @@ func (s *Server) executeJobQuery(ctx context.Context, userID int64, j Job, runDa
 	return rowCount, nil
 }
 
-func executeHTTPRequestJob(ctx context.Context, rawConfig json.RawMessage, runDate time.Time) error {
+func executeHTTPRequestJob(ctx context.Context, rawConfig json.RawMessage, runDate time.Time, secrets map[string]string) error {
 	var config httpRequestJobConfig
 	if err := json.Unmarshal(rawConfig, &config); err != nil {
 		return fmt.Errorf("invalid HTTP request configuration: %w", err)
@@ -789,14 +807,14 @@ func executeHTTPRequestJob(ctx context.Context, rawConfig json.RawMessage, runDa
 	req, err := http.NewRequestWithContext(
 		runCtx,
 		method,
-		renderJobTemplate(config.URL, runDate),
-		strings.NewReader(renderJobTemplate(config.Body, runDate)),
+		renderJobTemplate(config.URL, runDate, secrets),
+		strings.NewReader(renderJobTemplate(config.Body, runDate, secrets)),
 	)
 	if err != nil {
 		return err
 	}
 	for name, value := range config.Headers {
-		req.Header.Set(name, renderJobTemplate(value, runDate))
+		req.Header.Set(name, renderJobTemplate(value, runDate, secrets))
 	}
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
@@ -965,8 +983,23 @@ func (s *Server) JobsTick(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	results := make([]tickResult, 0, len(due))
 	usersToDrain := map[int64]bool{}
+	// Ticks span every user's due jobs in one pass, but secrets are per-user
+	// — cache each user's decrypted vault the first time it's needed instead
+	// of re-querying/re-decrypting it once per job.
+	secretsCache := map[int64]map[string]string{}
+	getSecrets := func(userID int64) map[string]string {
+		if cached, ok := secretsCache[userID]; ok {
+			return cached
+		}
+		secrets, err := loadUserSecrets(r.Context(), s.Pool, userID)
+		if err != nil {
+			secrets = map[string]string{}
+		}
+		secretsCache[userID] = secrets
+		return secrets
+	}
 	for _, d := range due {
-		run := s.executeJob(r.Context(), d.userID, d.job, "tick", now)
+		run := s.executeJob(r.Context(), d.userID, d.job, "tick", now, getSecrets(d.userID))
 		results = append(results, tickResult{JobID: d.job.ID, Name: d.job.Name, Status: run.Status})
 		usersToDrain[d.userID] = true
 		if run.Status == "success" {
@@ -987,7 +1020,7 @@ func (s *Server) JobsTick(w http.ResponseWriter, r *http.Request) {
 	}
 	for userID := range usersToDrain {
 		if allJobs, err := s.loadUserJobs(r.Context(), userID); err == nil {
-			s.drainJobQueue(r.Context(), userID, allJobs)
+			s.drainJobQueue(r.Context(), userID, allJobs, getSecrets(userID))
 		}
 	}
 
@@ -1067,7 +1100,7 @@ func (s *Server) usersWithQueuedWork(ctx context.Context) (map[int64]bool, error
 // "layer" of a dependency graph, so this is enough for any real DAG and
 // keeps a mistaken dependency cycle (never validated against elsewhere)
 // from looping forever.
-func (s *Server) drainJobQueue(ctx context.Context, userID int64, allJobs []Job) {
+func (s *Server) drainJobQueue(ctx context.Context, userID int64, allJobs []Job, secrets map[string]string) {
 	byID := make(map[string]Job, len(allJobs))
 	for _, j := range allJobs {
 		byID[j.ID] = j
@@ -1126,7 +1159,7 @@ func (s *Server) drainJobQueue(ctx context.Context, userID int64, allJobs []Job)
 				continue // leave queued — try again next pass/tick
 			}
 
-			run := s.executeJob(ctx, userID, job, "tick", e.runDate)
+			run := s.executeJob(ctx, userID, job, "tick", e.runDate, secrets)
 			s.Pool.Exec(ctx, `DELETE FROM job_queue WHERE id = $1`, e.id)
 			progressed = true
 			if run.Status == "success" {

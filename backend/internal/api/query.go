@@ -339,6 +339,12 @@ func (s *Server) GetConnectionSchema(w http.ResponseWriter, r *http.Request) {
 
 type runQueryRequest struct {
 	SQL string `json:"sql"`
+	// RenderTemplate opts into resolving {{date}}/{{secretName}} placeholders
+	// (see jobs.go's renderJobTemplate) before running the SQL — used by the
+	// job editor's "Test query" button so a job referencing a vault secret
+	// can be tested with the real value, without ordinary workbench queries
+	// ever having "{{" treated as anything but literal text.
+	RenderTemplate bool `json:"renderTemplate,omitempty"`
 }
 
 // QueryResult carries every cell as either a string or null, decoded from
@@ -370,6 +376,14 @@ func (s *Server) RunConnectionQuery(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.SQL) == "" {
 		writeError(w, http.StatusBadRequest, "sql is required")
 		return
+	}
+	if req.RenderTemplate {
+		secrets, err := loadUserSecrets(r.Context(), s.Pool, user.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load secrets")
+			return
+		}
+		req.SQL = renderJobTemplate(req.SQL, time.Now(), secrets)
 	}
 
 	id := chi.URLParam(r, "id")

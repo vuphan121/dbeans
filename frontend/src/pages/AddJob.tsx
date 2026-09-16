@@ -14,7 +14,7 @@ import { SQL_ENGINES, type CheckMode, type HttpRequestJobConfig, type JobType } 
 import { SqlEditor } from "@/components/workbench/SqlEditor";
 import { JobRunCalendar } from "@/components/jobs/JobRunCalendar";
 import { DependsOnPicker } from "@/components/jobs/DependsOnPicker";
-import { renderJobTemplate } from "@/lib/jobTemplate";
+import { TemplateField } from "@/components/jobs/TemplateField";
 
 const CRON_PRESETS = [
   { label: "Every 15 min", value: "*/15 * * * *" },
@@ -114,7 +114,9 @@ export default function AddJob() {
     if (!connectionId || !sql.trim() || !token) return;
     setTestState("testing");
     try {
-      const result = await runQuery(token, connectionId, renderJobTemplate(sql));
+      // renderTemplate: true resolves {{date}} and {{secretName}} server-side
+      // (see RunConnectionQuery) — secret values never touch the client.
+      const result = await runQuery(token, connectionId, sql, true);
       setTestMessage(`${result.rowCount} row${result.rowCount === 1 ? "" : "s"} · ${result.durationMs} ms`);
       setTestState("pass");
     } catch (err) {
@@ -224,29 +226,30 @@ export default function AddJob() {
         ) : (
           <>
             <Field label="URL">
-              <Input mono value={requestUrl} onChange={(e) => setRequestUrl(e.target.value)} placeholder="https://api.example.com/tasks/run" />
+              <TemplateField
+                singleLine
+                value={requestUrl}
+                onChange={setRequestUrl}
+                placeholder="https://api.example.com/tasks/run"
+              />
             </Field>
             <Field label="HTTP method">
               <Select value={requestMethod} onChange={(value) => setRequestMethod(value as HttpRequestJobConfig["method"])} options={WEBHOOK_METHOD_OPTIONS} />
             </Field>
             <Field label="Headers (JSON)">
-              <textarea
+              <TemplateField
                 value={requestHeaders}
-                onChange={(e) => setRequestHeaders(e.target.value)}
-                rows={4}
-                spellCheck={false}
-                placeholder={'{\n  "Authorization": "Bearer …"\n}'}
-                className="w-full resize-y rounded-[7px] border border-border-input bg-bg-inset px-[11px] py-2 font-mono text-[12px] leading-relaxed text-text-primary outline-none focus:border-border-focus"
+                onChange={setRequestHeaders}
+                minHeight="88px"
+                placeholder={'{\n  "Authorization": "Bearer {{API_TOKEN}}"\n}'}
               />
             </Field>
             <Field label="Request body (optional)">
-              <textarea
+              <TemplateField
                 value={requestBody}
-                onChange={(e) => setRequestBody(e.target.value)}
-                rows={6}
-                spellCheck={false}
+                onChange={setRequestBody}
+                minHeight="132px"
                 placeholder={'{\n  "date": "{{date}}"\n}'}
-                className="w-full resize-y rounded-[7px] border border-border-input bg-bg-inset px-[11px] py-2 font-mono text-[12px] leading-relaxed text-text-primary outline-none focus:border-border-focus"
               />
             </Field>
             <Field label="Fail if response field is a non-empty array (optional)">

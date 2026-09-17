@@ -114,17 +114,6 @@ function formatDuration(seconds: number): string {
   return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
 }
 
-function timeAgo(iso?: string): string {
-  if (!iso) return "never";
-  const ms = Date.now() - new Date(iso).getTime();
-  const mins = Math.round(ms / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-}
-
 // Reachability comes from dbeans' own ping mechanism. Everything else here
 // comes from whatever "Connection stats" query job has been collecting
 // hourly into this connection's own `dbeans_connection_stats` table — see
@@ -308,29 +297,6 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
             </div>
           </div>
         )}
-
-        <div className="flex items-center justify-between gap-3 rounded-[10px] border border-border-elevated bg-bg-raised px-5 py-4">
-          <div className="flex items-center gap-3">
-            <Dot
-              className={cn(
-                "h-2 w-2",
-                connection.status === "online" ? "bg-success-dot" : connection.status === "offline" ? "bg-error-dot" : "bg-text-faint",
-              )}
-            />
-            <div className="flex flex-col gap-0.5">
-              <span className="text-[15px] font-semibold text-text-primary">
-                {connection.status === "online" ? "Online" : connection.status === "offline" ? "Offline" : "Unknown"}
-              </span>
-              <span className="text-[11px] text-text-faint">
-                {connection.lastCheckedAt ? `checked ${timeAgo(connection.lastCheckedAt)}` : "never checked"}
-              </span>
-            </div>
-          </div>
-          <div className="flex flex-col items-end gap-0.5 text-right text-[11.5px] text-text-quiet">
-            <span className="font-medium text-text-tertiary">{connection.name}</span>
-            <span>{latest ? `${latest.table_count} tables` : "—"}</span>
-          </div>
-        </div>
 
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">

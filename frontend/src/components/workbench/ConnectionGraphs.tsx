@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Loader2 } from "lucide-react";
+import * as Dialog from "@radix-ui/react-dialog";
+import { Loader2, X } from "lucide-react";
 import { BarChart } from "@/components/ui/BarChart";
 import { Dot } from "@/components/ui/Badge";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
@@ -8,6 +9,8 @@ import { useJobsStore } from "@/state/jobs";
 import { runQuery, listJobRuns, ApiError } from "@/lib/api";
 import type { JobRun, SavedConnection } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+type OutageRun = JobRun & { jobName: string };
 
 interface StatsRow {
   collected_at: string;
@@ -128,6 +131,7 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [jobRuns, setJobRuns] = useState<Record<string, JobRun[]>>({});
+  const [selectedRun, setSelectedRun] = useState<OutageRun | null>(null);
 
   const [rangePreset, setRangePreset] = useState<RangePreset>(() => loadSavedRange(connection.id)?.preset ?? "month");
   const [customStart, setCustomStart] = useState<string>(
@@ -265,7 +269,7 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
     [statsJobRuns, range],
   );
 
-  const allRuns = useMemo(
+  const allRuns = useMemo<OutageRun[]>(
     () =>
       connectionJobs
         .flatMap((j) => (jobRuns[j.id] ?? []).map((r) => ({ ...r, jobName: j.name })))
@@ -358,18 +362,25 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
             <div className="py-1.5 text-[11px] text-text-quiet">No failures recorded for this connection's jobs.</div>
           ) : (
             recentOutages.map((run, i) => (
-              <div
+              <button
                 key={run.id}
-                className={cn("flex items-center gap-2 py-[3px] text-[11px]", i > 0 && "border-t border-border-faint")}
+                type="button"
+                onClick={() => setSelectedRun(run)}
+                className={cn(
+                  "flex w-full items-center gap-2 py-[3px] text-left text-[11px] hover:bg-bg-hover",
+                  i > 0 && "border-t border-border-faint",
+                )}
               >
-                <span className="text-text-tertiary">{(run as JobRun & { jobName: string }).jobName}</span>
+                <span className="text-text-tertiary">{run.jobName}</span>
                 <span className="text-error-dim">{run.status}</span>
                 <span className="ml-auto font-mono text-[10px] text-text-quiet">{new Date(run.startedAt).toLocaleString()}</span>
-              </div>
+              </button>
             ))
           )}
         </div>
       </div>
+
+      <RunLogDialog run={selectedRun} onClose={() => setSelectedRun(null)} />
     </div>
   );
 }
@@ -424,5 +435,57 @@ function DateField({
       onChange={(e) => onChange(e.target.value)}
       className="h-[30px] rounded-[7px] border border-border-input bg-bg-inset px-2 font-mono text-[11.5px] text-text-primary outline-none"
     />
+  );
+}
+
+function RunLogDialog({ run, onClose }: { run: OutageRun | null; onClose: () => void }) {
+  return (
+    <Dialog.Root open={run != null} onOpenChange={(v) => !v && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[520px] max-w-[90vw] -translate-x-1/2 -translate-y-1/2 rounded-[10px] border border-border-elevated bg-bg-raised p-5 shadow-2xl">
+          {run && (
+            <>
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div className="flex flex-col gap-0.5">
+                  <Dialog.Title className="text-[14px] font-semibold text-text-primary">{run.jobName}</Dialog.Title>
+                  <span className={cn("text-[11.5px]", run.status === "failed" ? "text-error-dim" : "text-text-faint")}>
+                    {run.status}
+                  </span>
+                </div>
+                <Dialog.Close className="flex h-6 w-6 items-center justify-center text-text-quiet hover:text-text-secondary">
+                  <X size={14} />
+                </Dialog.Close>
+              </div>
+
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 text-[11.5px]">
+                <DetailRow label="Started" value={new Date(run.startedAt).toLocaleString()} />
+                <DetailRow label="Finished" value={run.finishedAt ? new Date(run.finishedAt).toLocaleString() : "—"} />
+                <DetailRow label="Duration" value={run.durationMs != null ? `${run.durationMs}ms` : "—"} />
+                <DetailRow label="Attempts" value={String(run.attempts)} />
+                <DetailRow label="Triggered by" value={run.triggeredBy} />
+                <DetailRow label="Rows affected" value={run.rowsAffected != null ? String(run.rowsAffected) : "—"} />
+              </div>
+
+              <div className="mt-4 flex flex-col gap-1.5">
+                <span className="text-[10px] font-medium uppercase tracking-wide text-text-quiet">Error</span>
+                <pre className="max-h-[240px] overflow-auto whitespace-pre-wrap break-words rounded-[7px] border border-border-input bg-bg-inset p-3 font-mono text-[11px] text-error-text">
+                  {run.error || "No error message recorded for this run."}
+                </pre>
+              </div>
+            </>
+          )}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[10px] uppercase tracking-wide text-text-quiet">{label}</span>
+      <span className="font-mono text-text-secondary">{value}</span>
+    </div>
   );
 }

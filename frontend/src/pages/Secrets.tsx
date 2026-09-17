@@ -73,14 +73,6 @@ export default function Secrets() {
 
       <div className="flex flex-1 justify-center overflow-y-auto py-8">
         <div className="flex w-[660px] flex-col gap-8">
-          <div className="text-[12.5px] text-text-faint">
-            Named values (like environment variables) that any job can reference as{" "}
-            <code className="rounded bg-bg-inset px-1 py-0.5 font-mono text-text-tertiary">{"{{name}}"}</code> in its
-            SQL, URL, headers, or body — resolved at run time, the same way{" "}
-            <code className="rounded bg-bg-inset px-1 py-0.5 font-mono text-text-tertiary">{"{{date}}"}</code> is.
-            Values are write-only: once saved, a secret can be renamed or overwritten, but never viewed again.
-          </div>
-
           <Section
             title="Vault"
             action={

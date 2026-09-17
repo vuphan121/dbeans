@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { BarChart } from "@/components/ui/BarChart";
 import { Dot } from "@/components/ui/Badge";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { useAuthStore } from "@/state/auth";
 import { useJobsStore } from "@/state/jobs";
 import { runQuery, listJobRuns, ApiError } from "@/lib/api";
@@ -22,14 +23,30 @@ interface StatsRow {
   longest_query_seconds: number | null;
 }
 
-const STATS_TABLE_SQL = `
+type RangePreset = "7d" | "month" | "custom";
+
+const RANGE_OPTIONS: { value: RangePreset; label: string }[] = [
+  { value: "7d", label: "7d" },
+  { value: "month", label: "Month" },
+  { value: "custom", label: "Custom" },
+];
+
+function toDateInputValue(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function statsTableSql(start: Date, end: Date): string {
+  return `
   SELECT collected_at, database_size_bytes, active_connections, table_count,
          total_row_estimate, engine_version, max_connections, ssl_in_use,
          cache_hit_ratio, rollback_ratio, longest_query_seconds
   FROM dbeans_connection_stats
+  WHERE collected_at >= '${start.toISOString()}'
+    AND collected_at <= '${end.toISOString()}'
   ORDER BY collected_at DESC
-  LIMIT 200
+  LIMIT 1000
 `;
+}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -74,6 +91,26 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
   const [loading, setLoading] = useState(true);
   const [jobRuns, setJobRuns] = useState<Record<string, JobRun[]>>({});
 
+  const [rangePreset, setRangePreset] = useState<RangePreset>("month");
+  const [customStart, setCustomStart] = useState(() => toDateInputValue(new Date(Date.now() - 7 * 86400_000)));
+  const [customEnd, setCustomEnd] = useState(() => toDateInputValue(new Date()));
+
+  const range = useMemo(() => {
+    const end = new Date();
+    if (rangePreset === "custom") {
+      const start = new Date(`${customStart}T00:00:00`);
+      const customEndDate = new Date(`${customEnd}T23:59:59.999`);
+      if (!isNaN(start.getTime()) && !isNaN(customEndDate.getTime()) && start <= customEndDate) {
+        return { start, end: customEndDate };
+      }
+      return { start: new Date(end.getTime() - 7 * 86400_000), end };
+    }
+    if (rangePreset === "month") {
+      return { start: new Date(end.getFullYear(), end.getMonth(), 1, 0, 0, 0), end };
+    }
+    return { start: new Date(end.getTime() - 7 * 86400_000), end };
+  }, [rangePreset, customStart, customEnd]);
+
   const connectionJobs = useMemo(() => jobs.filter((j) => j.connectionId === connection.id), [jobs, connection.id]);
   const statsJob = useMemo(
     () => connectionJobs.find((j) => j.cronExpr === "0 * * * *") ?? connectionJobs[0],
@@ -87,7 +124,7 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
       setLoading(true);
       setStatsError(null);
       try {
-        const result = await runQuery(token, connection.id, STATS_TABLE_SQL);
+        const result = await runQuery(token, connection.id, statsTableSql(range.start, range.end));
         if (cancelled) return;
         const idx = (name: string) => result.columns.findIndex((c) => c.name === name);
         const num = (r: unknown[], name: string) => {
@@ -118,7 +155,7 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
     return () => {
       cancelled = true;
     };
-  }, [token, connection.id]);
+  }, [token, connection.id, range]);
 
   useEffect(() => {
     let cancelled = false;
@@ -150,11 +187,15 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
   const latencySeries = useMemo(
     () =>
       statsJobRuns
-        .filter((r) => r.durationMs != null)
+        .filter((r) => {
+          if (r.durationMs == null) return false;
+          const t = new Date(r.startedAt).getTime();
+          return t >= range.start.getTime() && t <= range.end.getTime();
+        })
         .slice()
         .reverse()
         .map((r) => ({ x: new Date(r.startedAt).getTime(), y: r.durationMs! })),
-    [statsJobRuns],
+    [statsJobRuns, range],
   );
 
   const allRuns = useMemo(
@@ -209,11 +250,23 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
           </div>
           <div className="flex flex-col items-end gap-0.5 text-right text-[11.5px] text-text-quiet">
             <span className="font-medium text-text-tertiary">{connection.name}</span>
-            <span>
-              {connection.engine}
-              {latest?.engine_version ? ` ${shortVersion(latest.engine_version)}` : ""}
-              {latest ? ` · ${latest.table_count} tables` : ""}
-            </span>
+            <span>{latest ? `${latest.table_count} tables` : "—"}</span>
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[10px] font-medium uppercase tracking-wide text-text-quiet">
+            {rangeLabel(rangePreset, customStart, customEnd)}
+          </span>
+          <div className="flex items-center gap-2">
+            {rangePreset === "custom" && (
+              <>
+                <DateField value={customStart} onChange={setCustomStart} max={customEnd} />
+                <span className="text-[11px] text-text-quiet">to</span>
+                <DateField value={customEnd} onChange={setCustomEnd} min={customStart} />
+              </>
+            )}
+            <SegmentedControl options={RANGE_OPTIONS} value={rangePreset} onChange={setRangePreset} className="w-[176px]" />
           </div>
         </div>
 
@@ -225,7 +278,11 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
           >
             <BarChart points={connSeries} formatValue={(v) => String(Math.round(v))} formatX={(x) => new Date(x).toLocaleString()} />
           </ChartCard>
-          <ChartCard label="Storage usage" value={latest ? formatBytes(latest.database_size_bytes) : "—"} foot="7-day trend">
+          <ChartCard
+            label="Storage usage"
+            value={latest ? formatBytes(latest.database_size_bytes) : "—"}
+            foot={rangeLabel(rangePreset, customStart, customEnd)}
+          >
             <BarChart points={storageSeries} formatValue={(v) => formatBytes(v)} formatX={(x) => new Date(x).toLocaleString()} />
           </ChartCard>
         </div>
@@ -235,19 +292,16 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
             label="Cache hit ratio"
             dot={dotFor(latest?.cache_hit_ratio, (v) => v >= 95)}
             value={latest?.cache_hit_ratio != null ? `${latest.cache_hit_ratio.toFixed(1)}%` : "—"}
-            foot="pg_stat_database"
           />
           <VitalSeg
             label="Rollback rate"
             dot={dotFor(latest?.rollback_ratio, (v) => v < 2)}
             value={latest?.rollback_ratio != null ? `${latest.rollback_ratio.toFixed(1)}%` : "—"}
-            foot="pg_stat_database"
           />
           <VitalSeg
             label="Longest running query"
             dot={dotFor(latest?.longest_query_seconds, (v) => v < 30)}
             value={latest?.longest_query_seconds != null ? formatDuration(latest.longest_query_seconds) : "—"}
-            foot="pg_stat_activity"
           />
           <div className="flex min-w-0 flex-1 flex-col gap-1 px-3.5 py-2.5">
             <span className="truncate text-[10px] font-medium uppercase tracking-wide text-text-quiet">Query latency</span>
@@ -285,9 +339,10 @@ function dotFor(value: number | null | undefined, isGood: (v: number) => boolean
   return isGood(value) ? "bg-success-dot" : "bg-error-dot";
 }
 
-function shortVersion(full: string): string {
-  const match = full.match(/^\S+\s+\S+/);
-  return match ? match[0] : full;
+function rangeLabel(preset: RangePreset, customStart: string, customEnd: string): string {
+  if (preset === "7d") return "Last 7 days";
+  if (preset === "month") return "This month";
+  return `${customStart} – ${customEnd}`;
 }
 
 function ChartCard({ label, value, foot, children }: { label: string; value: string; foot: string; children: ReactNode }) {
@@ -303,7 +358,7 @@ function ChartCard({ label, value, foot, children }: { label: string; value: str
   );
 }
 
-function VitalSeg({ label, dot, value, foot }: { label: string; dot: string; value: string; foot: string }) {
+function VitalSeg({ label, dot, value }: { label: string; dot: string; value: string }) {
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-1 px-3.5 py-2.5">
       <span className="truncate text-[10px] font-medium uppercase tracking-wide text-text-quiet">{label}</span>
@@ -311,7 +366,29 @@ function VitalSeg({ label, dot, value, foot }: { label: string; dot: string; val
         <Dot className={dot} />
         <span className="font-mono text-[13px] font-semibold text-text-secondary">{value}</span>
       </span>
-      <span className="text-[9.5px] text-text-quiet">{foot}</span>
     </div>
+  );
+}
+
+function DateField({
+  value,
+  onChange,
+  min,
+  max,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  min?: string;
+  max?: string;
+}) {
+  return (
+    <input
+      type="date"
+      value={value}
+      min={min}
+      max={max}
+      onChange={(e) => onChange(e.target.value)}
+      className="h-[30px] rounded-[7px] border border-border-input bg-bg-inset px-2 font-mono text-[11.5px] text-text-primary outline-none"
+    />
   );
 }

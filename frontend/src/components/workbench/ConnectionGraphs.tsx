@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { AlertCircle, Clock, Loader2, ShieldCheck, ShieldOff } from "lucide-react";
-import { LineChart, type LineChartSeries } from "@/components/ui/LineChart";
+import { Loader2 } from "lucide-react";
+import { BarChart } from "@/components/ui/BarChart";
 import { Dot } from "@/components/ui/Badge";
 import { useAuthStore } from "@/state/auth";
 import { useJobsStore } from "@/state/jobs";
@@ -17,11 +17,15 @@ interface StatsRow {
   engine_version: string | null;
   max_connections: number | null;
   ssl_in_use: boolean | null;
+  cache_hit_ratio: number | null;
+  rollback_ratio: number | null;
+  longest_query_seconds: number | null;
 }
 
 const STATS_TABLE_SQL = `
   SELECT collected_at, database_size_bytes, active_connections, table_count,
-         total_row_estimate, engine_version, max_connections, ssl_in_use
+         total_row_estimate, engine_version, max_connections, ssl_in_use,
+         cache_hit_ratio, rollback_ratio, longest_query_seconds
   FROM dbeans_connection_stats
   ORDER BY collected_at DESC
   LIMIT 200
@@ -39,6 +43,12 @@ function formatBytes(bytes: number): string {
   return `${v.toFixed(v < 10 ? 1 : 0)} ${units[i]}`;
 }
 
+function formatDuration(seconds: number): string {
+  if (seconds < 1) return "0s";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+}
+
 function timeAgo(iso?: string): string {
   if (!iso) return "never";
   const ms = Date.now() - new Date(iso).getTime();
@@ -50,11 +60,11 @@ function timeAgo(iso?: string): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
-// The per-connection health/metrics view — a second thing you can look at
-// besides the schema + SQL editor, fed by whatever "Connection stats" job
-// has been collecting hourly for this connection (see the job's own SQL in
-// AddJob for exactly what it captures) plus data dbeans already tracks
-// elsewhere (ping-based reachability, job run history).
+// Reachability comes from dbeans' own ping mechanism. Everything else here
+// comes from whatever "Connection stats" query job has been collecting
+// hourly into this connection's own `dbeans_connection_stats` table — see
+// docs/ARCHITECTURE.md §4 for the exact collection SQL, since dbeans itself
+// never writes to that table, only reads it back for these graphs.
 export function ConnectionGraphs({ connection }: { connection: SavedConnection }) {
   const token = useAuthStore((s) => s.token);
   const jobs = useJobsStore((s) => s.jobs);
@@ -80,6 +90,10 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
         const result = await runQuery(token, connection.id, STATS_TABLE_SQL);
         if (cancelled) return;
         const idx = (name: string) => result.columns.findIndex((c) => c.name === name);
+        const num = (r: unknown[], name: string) => {
+          const v = r[idx(name)];
+          return v == null ? null : Number(v);
+        };
         const rows: StatsRow[] = result.rows.map((r) => ({
           collected_at: r[idx("collected_at")] as unknown as string,
           database_size_bytes: Number(r[idx("database_size_bytes")]),
@@ -87,8 +101,11 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
           table_count: Number(r[idx("table_count")]),
           total_row_estimate: Number(r[idx("total_row_estimate")]),
           engine_version: r[idx("engine_version")] as unknown as string | null,
-          max_connections: r[idx("max_connections")] != null ? Number(r[idx("max_connections")]) : null,
+          max_connections: num(r, "max_connections"),
           ssl_in_use: r[idx("ssl_in_use")] as unknown as boolean | null,
+          cache_hit_ratio: num(r, "cache_hit_ratio"),
+          rollback_ratio: num(r, "rollback_ratio"),
+          longest_query_seconds: num(r, "longest_query_seconds"),
         }));
         setStats(rows.reverse()); // oldest first, for charting left-to-right
       } catch (err) {
@@ -120,46 +137,23 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
 
   const latest = stats && stats.length > 0 ? stats[stats.length - 1] : null;
 
-  const storageSeries: LineChartSeries[] = useMemo(
-    () => [
-      {
-        label: "Storage",
-        color: "var(--color-accent)",
-        points: (stats ?? []).map((r) => ({ x: new Date(r.collected_at).getTime(), y: r.database_size_bytes })),
-      },
-    ],
+  const connSeries = useMemo(
+    () => (stats ?? []).map((r) => ({ x: new Date(r.collected_at).getTime(), y: r.active_connections })),
     [stats],
   );
-
-  const connectionsSeries: LineChartSeries[] = useMemo(
-    () => [
-      {
-        label: "Active",
-        color: "var(--color-accent)",
-        points: (stats ?? []).map((r) => ({ x: new Date(r.collected_at).getTime(), y: r.active_connections })),
-      },
-      {
-        label: "Max",
-        color: "var(--color-text-quiet)",
-        points: (stats ?? []).map((r) => ({ x: new Date(r.collected_at).getTime(), y: r.max_connections ?? 0 })),
-      },
-    ],
+  const storageSeries = useMemo(
+    () => (stats ?? []).map((r) => ({ x: new Date(r.collected_at).getTime(), y: r.database_size_bytes })),
     [stats],
   );
 
   const statsJobRuns = statsJob ? jobRuns[statsJob.id] ?? [] : [];
-  const latencySeries: LineChartSeries[] = useMemo(
-    () => [
-      {
-        label: "Latency",
-        color: "var(--color-accent)",
-        points: statsJobRuns
-          .filter((r) => r.durationMs != null)
-          .slice()
-          .reverse()
-          .map((r) => ({ x: new Date(r.startedAt).getTime(), y: r.durationMs! })),
-      },
-    ],
+  const latencySeries = useMemo(
+    () =>
+      statsJobRuns
+        .filter((r) => r.durationMs != null)
+        .slice()
+        .reverse()
+        .map((r) => ({ x: new Date(r.startedAt).getTime(), y: r.durationMs! })),
     [statsJobRuns],
   );
 
@@ -170,11 +164,9 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
         .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()),
     [connectionJobs, jobRuns],
   );
-  const recentOutages = allRuns.filter((r) => r.status !== "success").slice(0, 8);
+  const recentOutages = allRuns.filter((r) => r.status !== "success").slice(0, 5);
 
-  const lastSuccessfulCheck = statsJobRuns.find((r) => r.status === "success")?.finishedAt;
-  const authOk = statsJobRuns[0]?.status === "success";
-  const sslMode = "sslMode" in connection.fields ? connection.fields.sslMode : undefined;
+  const connPct = latest?.max_connections ? Math.round((latest.active_connections / latest.max_connections) * 100) : null;
 
   if (loading) {
     return (
@@ -186,94 +178,101 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
 
   return (
     <div className="flex-1 overflow-y-auto bg-bg-app p-6">
-      <div className="mx-auto flex max-w-[920px] flex-col gap-4">
+      <div className="mx-auto flex max-w-[820px] flex-col gap-3">
         {statsError && (
           <div className="rounded-[8px] border border-border-default bg-bg-surface px-4 py-6 text-center text-[12.5px] text-text-faint">
             No stats collected yet for this connection.
             <div className="mt-1 text-[11.5px] text-text-quiet">
-              Set up an hourly "Connection stats" query job against this connection to start populating these
-              graphs.
+              Set up (or update) an hourly "Connection stats" query job against this connection — see
+              docs/ARCHITECTURE.md §4 for the collection SQL, including the newer cache-hit/rollback/longest-query
+              columns.
             </div>
           </div>
         )}
 
-        <div className="grid grid-cols-4 gap-3">
-          <StatusCard
-            label="Reachability"
-            value={connection.status === "online" ? "Online" : connection.status === "offline" ? "Offline" : "Unknown"}
-            dotClassName={
-              connection.status === "online" ? "bg-success-dot" : connection.status === "offline" ? "bg-error-dot" : "bg-text-faint"
-            }
-            sub={connection.lastCheckedAt ? `checked ${timeAgo(connection.lastCheckedAt)}` : "never checked"}
-          />
-          <StatusCard
-            label="Authentication"
-            value={statsJobRuns.length === 0 ? "Unknown" : authOk ? "Succeeding" : "Failing"}
-            dotClassName={statsJobRuns.length === 0 ? "bg-text-faint" : authOk ? "bg-success-dot" : "bg-error-dot"}
-            sub={statsJobRuns.length === 0 ? "no checks yet" : `last run ${timeAgo(statsJobRuns[0]?.startedAt)}`}
-          />
-          <StatusCard
-            label="TLS"
-            icon={sslMode && sslMode !== "disable" ? <ShieldCheck size={13} /> : <ShieldOff size={13} />}
-            value={sslMode ? sslMode : "n/a"}
-            dotClassName={sslMode && sslMode !== "disable" ? "bg-success-dot" : "bg-text-faint"}
-            sub={latest?.ssl_in_use != null ? `session: ${latest.ssl_in_use ? "encrypted" : "plain"}` : "configured mode"}
-          />
-          <StatusCard
-            label="Last successful check"
-            icon={<Clock size={13} />}
-            value={timeAgo(lastSuccessfulCheck)}
-            dotClassName="bg-text-faint"
-            sub={statsJob ? statsJob.name : "no stats job"}
-          />
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <ChartCard title="Storage usage" value={latest ? formatBytes(latest.database_size_bytes) : "—"}>
-            <LineChart series={storageSeries} formatValue={(v) => formatBytes(v)} formatX={(x) => new Date(x).toLocaleString()} />
-          </ChartCard>
-          <ChartCard
-            title="Active vs. max connections"
-            value={latest ? `${latest.active_connections} / ${latest.max_connections ?? "—"}` : "—"}
-          >
-            <LineChart series={connectionsSeries} formatX={(x) => new Date(x).toLocaleString()} />
-          </ChartCard>
-          <ChartCard title="Query latency" value={statsJobRuns[0]?.durationMs != null ? `${statsJobRuns[0].durationMs}ms` : "—"}>
-            <LineChart series={latencySeries} formatValue={(v) => `${Math.round(v)}ms`} formatX={(x) => new Date(x).toLocaleString()} />
-          </ChartCard>
-          <div className="flex flex-col gap-2 rounded-[8px] border border-border-default bg-bg-surface p-4">
-            <div className="text-[11px] font-medium uppercase tracking-wide text-text-quiet">Database</div>
-            <InfoRow label="Engine" value={connection.engine} />
-            <InfoRow label="Version" value={latest?.engine_version ? shortVersion(latest.engine_version) : "—"} />
-            <InfoRow label="Tables" value={latest ? String(latest.table_count) : "—"} />
-            <InfoRow label="Rows (est.)" value={latest ? latest.total_row_estimate.toLocaleString() : "—"} />
-          </div>
-        </div>
-
-        <div className="flex flex-col gap-1 rounded-[7px] border border-border-default">
-          <div className="border-b border-border-faint px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-text-quiet">
-            Recent outages &amp; failed runs
-          </div>
-          {recentOutages.length === 0 ? (
-            <div className="px-3 py-3 text-[12px] text-text-quiet">No failures recorded for this connection's jobs.</div>
-          ) : (
-            <div className="max-h-[220px] overflow-y-auto">
-              {recentOutages.map((run) => (
-                <div
-                  key={run.id}
-                  className="flex items-center gap-2.5 border-b border-border-faint px-3 py-1.5 text-[11.5px] last:border-b-0"
-                >
-                  {run.status === "failed" ? (
-                    <AlertCircle size={11} className="shrink-0 text-error-dim" />
-                  ) : (
-                    <Dot className={cn("shrink-0", "bg-text-faint")} />
-                  )}
-                  <span className="text-text-secondary">{(run as JobRun & { jobName: string }).jobName}</span>
-                  <span className="text-text-quiet">{run.status}</span>
-                  <span className="ml-auto text-text-quiet">{new Date(run.startedAt).toLocaleString()}</span>
-                </div>
-              ))}
+        <div className="flex items-center justify-between gap-3 rounded-[10px] border border-border-elevated bg-bg-raised px-5 py-4">
+          <div className="flex items-center gap-3">
+            <Dot
+              className={cn(
+                "h-2 w-2",
+                connection.status === "online" ? "bg-success-dot" : connection.status === "offline" ? "bg-error-dot" : "bg-text-faint",
+              )}
+            />
+            <div className="flex flex-col gap-0.5">
+              <span className="text-[15px] font-semibold text-text-primary">
+                {connection.status === "online" ? "Online" : connection.status === "offline" ? "Offline" : "Unknown"}
+              </span>
+              <span className="text-[11px] text-text-faint">
+                {connection.lastCheckedAt ? `checked ${timeAgo(connection.lastCheckedAt)}` : "never checked"}
+              </span>
             </div>
+          </div>
+          <div className="flex flex-col items-end gap-0.5 text-right text-[11.5px] text-text-quiet">
+            <span className="font-medium text-text-tertiary">{connection.name}</span>
+            <span>
+              {connection.engine}
+              {latest?.engine_version ? ` ${shortVersion(latest.engine_version)}` : ""}
+              {latest ? ` · ${latest.table_count} tables` : ""}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2.5">
+          <ChartCard
+            label="Connections used"
+            value={connPct != null ? `${connPct}%` : "—"}
+            foot={latest?.max_connections ? `${latest.active_connections} of ${latest.max_connections} max` : "no data"}
+          >
+            <BarChart points={connSeries} formatValue={(v) => String(Math.round(v))} formatX={(x) => new Date(x).toLocaleString()} />
+          </ChartCard>
+          <ChartCard label="Storage usage" value={latest ? formatBytes(latest.database_size_bytes) : "—"} foot="7-day trend">
+            <BarChart points={storageSeries} formatValue={(v) => formatBytes(v)} formatX={(x) => new Date(x).toLocaleString()} />
+          </ChartCard>
+        </div>
+
+        <div className="flex divide-x divide-border-faint rounded-[9px] border border-border-default bg-bg-surface">
+          <VitalSeg
+            label="Cache hit ratio"
+            dot={dotFor(latest?.cache_hit_ratio, (v) => v >= 95)}
+            value={latest?.cache_hit_ratio != null ? `${latest.cache_hit_ratio.toFixed(1)}%` : "—"}
+            foot="pg_stat_database"
+          />
+          <VitalSeg
+            label="Rollback rate"
+            dot={dotFor(latest?.rollback_ratio, (v) => v < 2)}
+            value={latest?.rollback_ratio != null ? `${latest.rollback_ratio.toFixed(1)}%` : "—"}
+            foot="pg_stat_database"
+          />
+          <VitalSeg
+            label="Longest running query"
+            dot={dotFor(latest?.longest_query_seconds, (v) => v < 30)}
+            value={latest?.longest_query_seconds != null ? formatDuration(latest.longest_query_seconds) : "—"}
+            foot="pg_stat_activity"
+          />
+          <div className="flex min-w-0 flex-1 flex-col gap-1 px-3.5 py-2.5">
+            <span className="truncate text-[10px] font-medium uppercase tracking-wide text-text-quiet">Query latency</span>
+            <span className="font-mono text-[13px] font-semibold text-text-secondary">
+              {statsJobRuns[0]?.durationMs != null ? `${statsJobRuns[0].durationMs}ms` : "—"}
+            </span>
+            <BarChart points={latencySeries} compact formatValue={(v) => `${Math.round(v)}ms`} />
+          </div>
+        </div>
+
+        <div className="pt-1">
+          <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-text-quiet">Recent failed runs</div>
+          {recentOutages.length === 0 ? (
+            <div className="py-1.5 text-[11px] text-text-quiet">No failures recorded for this connection's jobs.</div>
+          ) : (
+            recentOutages.map((run, i) => (
+              <div
+                key={run.id}
+                className={cn("flex items-center gap-2 py-[3px] text-[11px]", i > 0 && "border-t border-border-faint")}
+              >
+                <span className="text-text-tertiary">{(run as JobRun & { jobName: string }).jobName}</span>
+                <span className="text-error-dim">{run.status}</span>
+                <span className="ml-auto font-mono text-[10px] text-text-quiet">{new Date(run.startedAt).toLocaleString()}</span>
+              </div>
+            ))
           )}
         </div>
       </div>
@@ -281,53 +280,38 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
   );
 }
 
+function dotFor(value: number | null | undefined, isGood: (v: number) => boolean): string {
+  if (value == null) return "bg-text-faint";
+  return isGood(value) ? "bg-success-dot" : "bg-error-dot";
+}
+
 function shortVersion(full: string): string {
   const match = full.match(/^\S+\s+\S+/);
   return match ? match[0] : full;
 }
 
-function StatusCard({
-  label,
-  value,
-  sub,
-  dotClassName,
-  icon,
-}: {
-  label: string;
-  value: string;
-  sub: string;
-  dotClassName: string;
-  icon?: ReactNode;
-}) {
+function ChartCard({ label, value, foot, children }: { label: string; value: string; foot: string; children: ReactNode }) {
   return (
-    <div className="flex flex-col gap-1.5 rounded-[8px] border border-border-default bg-bg-surface p-3.5">
-      <div className="text-[10.5px] font-medium uppercase tracking-wide text-text-quiet">{label}</div>
-      <div className="flex items-center gap-1.5">
-        {icon ?? <Dot className={dotClassName} />}
-        <span className="text-[13px] font-medium text-text-primary">{value}</span>
-      </div>
-      <div className="text-[10.5px] text-text-faint">{sub}</div>
-    </div>
-  );
-}
-
-function ChartCard({ title, value, children }: { title: string; value: string; children: ReactNode }) {
-  return (
-    <div className="flex flex-col gap-2 rounded-[8px] border border-border-default bg-bg-surface p-4">
-      <div className="flex items-center justify-between">
-        <div className="text-[11px] font-medium uppercase tracking-wide text-text-quiet">{title}</div>
-        <div className="font-mono text-[12px] text-text-primary">{value}</div>
+    <div className="flex flex-col gap-2 rounded-[9px] border border-border-default bg-bg-surface p-3.5 pb-3">
+      <div className="flex items-baseline justify-between">
+        <span className="text-[10.5px] font-medium uppercase tracking-wide text-text-quiet">{label}</span>
+        <span className="font-mono text-[17px] font-semibold text-text-primary">{value}</span>
       </div>
       {children}
+      <div className="text-[10.5px] text-text-faint">{foot}</div>
     </div>
   );
 }
 
-function InfoRow({ label, value }: { label: string; value: string }) {
+function VitalSeg({ label, dot, value, foot }: { label: string; dot: string; value: string; foot: string }) {
   return (
-    <div className="flex items-center justify-between text-[12px]">
-      <span className="text-text-faint">{label}</span>
-      <span className="font-mono text-text-secondary">{value}</span>
+    <div className="flex min-w-0 flex-1 flex-col gap-1 px-3.5 py-2.5">
+      <span className="truncate text-[10px] font-medium uppercase tracking-wide text-text-quiet">{label}</span>
+      <span className="flex items-center gap-1.5">
+        <Dot className={dot} />
+        <span className="font-mono text-[13px] font-semibold text-text-secondary">{value}</span>
+      </span>
+      <span className="text-[9.5px] text-text-quiet">{foot}</span>
     </div>
   );
 }

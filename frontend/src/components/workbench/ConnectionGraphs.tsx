@@ -23,16 +23,64 @@ interface StatsRow {
   longest_query_seconds: number | null;
 }
 
-type RangePreset = "7d" | "month" | "custom";
+type RangePreset = "week" | "month" | "custom";
 
 const RANGE_OPTIONS: { value: RangePreset; label: string }[] = [
-  { value: "7d", label: "7d" },
-  { value: "month", label: "Month" },
+  { value: "week", label: "This week" },
+  { value: "month", label: "This month" },
   { value: "custom", label: "Custom" },
 ];
 
+// Local date components, not toISOString() — a UTC conversion shifts the
+// displayed day by one whenever local midnight and UTC midnight fall on
+// different calendar dates (any positive UTC offset around local midnight).
 function toDateInputValue(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+// Monday-start week — no particular locale requirement here, just a
+// consistent, documented choice.
+function startOfWeek(d: Date): Date {
+  const day = d.getDay(); // 0 = Sunday .. 6 = Saturday
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const start = new Date(d);
+  start.setDate(d.getDate() + diffToMonday);
+  start.setHours(0, 0, 0, 0);
+  return start;
+}
+
+function startOfMonth(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0);
+}
+
+interface SavedRange {
+  preset: RangePreset;
+  start: string;
+  end: string;
+}
+
+function rangeStorageKey(connectionId: string): string {
+  return `dbeans:graphs:range:${connectionId}`;
+}
+
+// Per-connection, so switching between connections doesn't clobber each
+// other's last-used range. Best-effort: a private window or blocked storage
+// just falls back to the "this month" default below.
+function loadSavedRange(connectionId: string): SavedRange | null {
+  try {
+    const raw = localStorage.getItem(rangeStorageKey(connectionId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.preset === "string" && typeof parsed.start === "string" && typeof parsed.end === "string") {
+      return parsed as SavedRange;
+    }
+  } catch {
+    // ignore — treat as no saved range
+  }
+  return null;
 }
 
 function statsTableSql(start: Date, end: Date): string {
@@ -88,28 +136,55 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
 
   const [stats, setStats] = useState<StatsRow[] | null>(null);
   const [statsError, setStatsError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [jobRuns, setJobRuns] = useState<Record<string, JobRun[]>>({});
 
-  const [rangePreset, setRangePreset] = useState<RangePreset>("month");
-  const [customStart, setCustomStart] = useState(() => toDateInputValue(new Date(Date.now() - 7 * 86400_000)));
-  const [customEnd, setCustomEnd] = useState(() => toDateInputValue(new Date()));
+  const [rangePreset, setRangePreset] = useState<RangePreset>(() => loadSavedRange(connection.id)?.preset ?? "month");
+  const [customStart, setCustomStart] = useState<string>(
+    () => loadSavedRange(connection.id)?.start ?? toDateInputValue(startOfMonth(new Date())),
+  );
+  const [customEnd, setCustomEnd] = useState<string>(() => loadSavedRange(connection.id)?.end ?? toDateInputValue(new Date()));
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(rangeStorageKey(connection.id), JSON.stringify({ preset: rangePreset, start: customStart, end: customEnd }));
+    } catch {
+      // best-effort — a blocked/private-window store just means it won't persist
+    }
+  }, [connection.id, rangePreset, customStart, customEnd]);
+
+  function applyPreset(preset: "week" | "month") {
+    const now = new Date();
+    setCustomStart(toDateInputValue(preset === "week" ? startOfWeek(now) : startOfMonth(now)));
+    setCustomEnd(toDateInputValue(now));
+    setRangePreset(preset);
+  }
+
+  function handleRangeOptionChange(v: RangePreset) {
+    if (v === "custom") setRangePreset("custom");
+    else applyPreset(v);
+  }
+
+  function handleCustomStartChange(v: string) {
+    setCustomStart(v);
+    setRangePreset("custom");
+  }
+
+  function handleCustomEndChange(v: string) {
+    setCustomEnd(v);
+    setRangePreset("custom");
+  }
 
   const range = useMemo(() => {
-    const end = new Date();
-    if (rangePreset === "custom") {
-      const start = new Date(`${customStart}T00:00:00`);
-      const customEndDate = new Date(`${customEnd}T23:59:59.999`);
-      if (!isNaN(start.getTime()) && !isNaN(customEndDate.getTime()) && start <= customEndDate) {
-        return { start, end: customEndDate };
-      }
-      return { start: new Date(end.getTime() - 7 * 86400_000), end };
+    const start = new Date(`${customStart}T00:00:00`);
+    const end = new Date(`${customEnd}T23:59:59.999`);
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) {
+      const now = new Date();
+      return { start: startOfMonth(now), end: now };
     }
-    if (rangePreset === "month") {
-      return { start: new Date(end.getFullYear(), end.getMonth(), 1, 0, 0, 0), end };
-    }
-    return { start: new Date(end.getTime() - 7 * 86400_000), end };
-  }, [rangePreset, customStart, customEnd]);
+    return { start, end };
+  }, [customStart, customEnd]);
 
   const connectionJobs = useMemo(() => jobs.filter((j) => j.connectionId === connection.id), [jobs, connection.id]);
   const statsJob = useMemo(
@@ -121,7 +196,7 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
     let cancelled = false;
     async function load() {
       if (!token) return;
-      setLoading(true);
+      setRefreshing(true);
       setStatsError(null);
       try {
         const result = await runQuery(token, connection.id, statsTableSql(range.start, range.end));
@@ -148,7 +223,10 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
       } catch (err) {
         if (!cancelled) setStatsError(err instanceof ApiError ? err.message : "Failed to load stats");
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setRefreshing(false);
+          setInitialLoading(false);
+        }
       }
     }
     load();
@@ -209,7 +287,7 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
 
   const connPct = latest?.max_connections ? Math.round((latest.active_connections / latest.max_connections) * 100) : null;
 
-  if (loading) {
+  if (initialLoading) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <Loader2 size={18} className="animate-spin text-text-quiet" />
@@ -255,18 +333,14 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
         </div>
 
         <div className="flex items-center justify-between gap-3">
-          <span className="text-[10px] font-medium uppercase tracking-wide text-text-quiet">
-            {rangeLabel(rangePreset, customStart, customEnd)}
-          </span>
           <div className="flex items-center gap-2">
-            {rangePreset === "custom" && (
-              <>
-                <DateField value={customStart} onChange={setCustomStart} max={customEnd} />
-                <span className="text-[11px] text-text-quiet">to</span>
-                <DateField value={customEnd} onChange={setCustomEnd} min={customStart} />
-              </>
-            )}
-            <SegmentedControl options={RANGE_OPTIONS} value={rangePreset} onChange={setRangePreset} className="w-[176px]" />
+            <DateField value={customStart} onChange={handleCustomStartChange} max={customEnd} />
+            <span className="text-[11px] text-text-quiet">to</span>
+            <DateField value={customEnd} onChange={handleCustomEndChange} min={customStart} />
+          </div>
+          <div className="flex items-center gap-2">
+            {refreshing && <Loader2 size={12} className="animate-spin text-text-quiet" />}
+            <SegmentedControl options={RANGE_OPTIONS} value={rangePreset} onChange={handleRangeOptionChange} className="w-[248px]" />
           </div>
         </div>
 
@@ -281,7 +355,7 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
           <ChartCard
             label="Storage usage"
             value={latest ? formatBytes(latest.database_size_bytes) : "—"}
-            foot={rangeLabel(rangePreset, customStart, customEnd)}
+            foot={`${customStart} – ${customEnd}`}
           >
             <BarChart points={storageSeries} formatValue={(v) => formatBytes(v)} formatX={(x) => new Date(x).toLocaleString()} />
           </ChartCard>
@@ -337,12 +411,6 @@ export function ConnectionGraphs({ connection }: { connection: SavedConnection }
 function dotFor(value: number | null | undefined, isGood: (v: number) => boolean): string {
   if (value == null) return "bg-text-faint";
   return isGood(value) ? "bg-success-dot" : "bg-error-dot";
-}
-
-function rangeLabel(preset: RangePreset, customStart: string, customEnd: string): string {
-  if (preset === "7d") return "Last 7 days";
-  if (preset === "month") return "This month";
-  return `${customStart} – ${customEnd}`;
 }
 
 function ChartCard({ label, value, foot, children }: { label: string; value: string; foot: string; children: ReactNode }) {

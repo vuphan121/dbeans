@@ -259,9 +259,6 @@ export default function AddJob() {
                 onChange={(e) => setFailOnField(e.target.value)}
                 placeholder="e.g. failed"
               />
-              <div className="text-[11px] text-text-faint">
-                Catches a 2xx response that still reports partial failures, e.g. {"{ \"failed\": [...] }"}.
-              </div>
             </Field>
             <Field label="Request timeout in seconds (optional)">
               <Input
@@ -270,7 +267,6 @@ export default function AddJob() {
                 onChange={(e) => setTimeoutSeconds(e.target.value.replace(/\D/g, ""))}
                 placeholder="20 (default)"
               />
-              <div className="text-[11px] text-text-faint">Raise this for a slow or cold-starting endpoint.</div>
             </Field>
           </>
         )}

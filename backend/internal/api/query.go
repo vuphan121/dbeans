@@ -90,15 +90,27 @@ func (s *Server) connectTarget(ctx context.Context, engine string, fields sqlCon
 }
 
 type ColumnInfo struct {
-	Name         string `json:"name"`
-	Type         string `json:"type"`
-	IsPrimaryKey bool   `json:"isPrimaryKey,omitempty"`
+	Name         string           `json:"name"`
+	Type         string           `json:"type"`
+	IsPrimaryKey bool             `json:"isPrimaryKey,omitempty"`
+	Nullable     bool             `json:"nullable"`
+	DefaultValue *string          `json:"defaultValue,omitempty"`
+	IsIdentity   bool             `json:"isIdentity,omitempty"`
+	IsGenerated  bool             `json:"isGenerated,omitempty"`
+	EnumValues   []string         `json:"enumValues,omitempty"`
+	References   *ColumnReference `json:"references,omitempty"`
 	// SourceSchema/SourceTable identify which real table a query-result
 	// column came from (resolved from pgconn.FieldDescription's TableOID —
 	// see RunConnectionQuery). Empty for computed expressions/aggregates,
 	// and always empty for schema-introspection ColumnInfo values.
 	SourceSchema string `json:"sourceSchema,omitempty"`
 	SourceTable  string `json:"sourceTable,omitempty"`
+}
+
+type ColumnReference struct {
+	Schema string `json:"schema"`
+	Table  string `json:"table"`
+	Column string `json:"column"`
 }
 
 // tableKey identifies a table by schema+name — shared between schema

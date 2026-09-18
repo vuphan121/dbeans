@@ -37,7 +37,7 @@ func New(ctx context.Context) (http.Handler, *pgxpool.Pool, error) {
 		return nil, nil, fmt.Errorf("DATABASE_URL is not set")
 	}
 
-	allowedOrigins := strings.Split(getenvDefault("ALLOWED_ORIGINS", "http://localhost:5183"), ",")
+	allowedOrigins := strings.Split(getenvDefault("ALLOWED_ORIGINS", "http://localhost:5173"), ",")
 
 	if err := crypto.Init(os.Getenv("CONNECTION_ENCRYPTION_KEY")); err != nil {
 		return nil, nil, fmt.Errorf("CONNECTION_ENCRYPTION_KEY: %w", err)
@@ -105,6 +105,12 @@ func New(ctx context.Context) (http.Handler, *pgxpool.Pool, error) {
 	r.Get("/api/connections/{id}/schema", s.GetConnectionSchema)
 	r.Post("/api/connections/{id}/query", s.RunConnectionQuery)
 	r.Post("/api/connections/{id}/update-cell", s.UpdateConnectionCell)
+	r.Post("/api/connections/{id}/table-data", s.BrowseTableData)
+	r.Post("/api/connections/{id}/table-rows", s.InsertTableRow)
+	r.Patch("/api/connections/{id}/table-rows", s.UpdateTableRow)
+	r.Delete("/api/connections/{id}/table-rows", s.DeleteTableRow)
+	r.Post("/api/connections/{id}/table-rows/bulk-delete", s.BulkDeleteTableRows)
+	r.Post("/api/connections/{id}/schema-change", s.ExecuteSchemaChange)
 	r.Get("/api/connections/{id}/redis/keys", s.ListRedisKeys)
 	r.Post("/api/connections/{id}/redis/keys", s.SaveRedisKey)
 	r.Put("/api/connections/{id}/redis/keys", s.SaveRedisKey)

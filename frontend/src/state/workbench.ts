@@ -22,6 +22,7 @@ interface WorkbenchState {
   closeTab: (id: string) => void;
   updateTabSql: (id: string, sql: string) => void;
   openTable: (tableName: string) => void;
+  openSql: (title: string, sql: string) => void;
   openSnippet: (snippetId: string, name: string, sql: string) => void;
   linkTabToSnippet: (tabId: string, snippetId: string, name: string) => void;
   renameTabForSnippet: (tabId: string, name: string) => void;
@@ -86,6 +87,11 @@ export const useWorkbenchStore = create<WorkbenchState>()((set, get) => ({
       ],
       activeTabId: id,
     }));
+  },
+
+  openSql: (title, sql) => {
+    const id = `tab_${Date.now().toString(36)}`;
+    set((s) => ({ tabs: [...s.tabs, { id, kind: "sql", title, sql }], activeTabId: id }));
   },
 
   openSnippet: (snippetId, name, sql) => {

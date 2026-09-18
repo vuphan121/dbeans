@@ -7,6 +7,9 @@ import type {
   KafkaMessage,
   KafkaTopic,
   QueryResult,
+  DataFilter,
+  DataSort,
+  TableDataPage,
   RedisKeyEntry,
   SavedConnection,
   ScheduledJob,
@@ -150,6 +153,65 @@ export function updateCell(token: string, id: string, input: UpdateCellInput): P
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(input),
+  });
+}
+
+export function browseTableData(
+  token: string,
+  id: string,
+  input: { schema: string; table: string; filters: Omit<DataFilter, "id">[]; sorts?: DataSort[]; page: number; pageSize: number },
+): Promise<TableDataPage> {
+  return request(`/api/connections/${id}/table-data`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+}
+
+export interface TableRowMutation {
+  schema: string;
+  table: string;
+  values?: Record<string, string | null>;
+  key?: Record<string, string | null>;
+}
+
+export function insertTableRow(token: string, id: string, input: TableRowMutation): Promise<{ ok: boolean; rowsAffected: number }> {
+  return request(`/api/connections/${id}/table-rows`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+}
+
+export function updateTableRow(token: string, id: string, input: TableRowMutation): Promise<{ ok: boolean; rowsAffected: number }> {
+  return request(`/api/connections/${id}/table-rows`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+}
+
+export function deleteTableRow(token: string, id: string, input: TableRowMutation): Promise<{ ok: boolean; rowsAffected: number }> {
+  return request(`/api/connections/${id}/table-rows`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+}
+
+export function bulkDeleteTableRows(token: string, id: string, input: { schema: string; table: string; keys: Record<string, string | null>[] }): Promise<{ ok: boolean; rowsAffected: number }> {
+  return request(`/api/connections/${id}/table-rows/bulk-delete`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+}
+
+export function executeSchemaChange(token: string, id: string, sql: string): Promise<{ ok: boolean }> {
+  return request(`/api/connections/${id}/schema-change`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ sql }),
   });
 }
 

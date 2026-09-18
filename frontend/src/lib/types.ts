@@ -77,6 +77,12 @@ export interface ColumnInfo {
   /** Which real table this query-result column came from, if any (empty for computed expressions/joins spanning multiple tables). */
   sourceSchema?: string;
   sourceTable?: string;
+  nullable?: boolean;
+  defaultValue?: string;
+  isIdentity?: boolean;
+  isGenerated?: boolean;
+  enumValues?: string[];
+  references?: { schema: string; table: string; column: string };
 }
 
 export interface TableInfo {
@@ -112,6 +118,28 @@ export interface QueryResult {
   truncated: boolean;
   durationMs: number;
   command: string;
+}
+
+export type DataFilterOperator = "eq" | "neq" | "contains" | "starts-with" | "ends-with" | "gt" | "gte" | "lt" | "lte" | "is-null" | "not-null";
+
+export interface DataFilter {
+  id: string;
+  column: string;
+  operator: DataFilterOperator;
+  value: string;
+}
+
+export interface TableDataPage {
+  columns: ColumnInfo[];
+  rows: (string | null)[][];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface DataSort {
+  column: string;
+  direction: "asc" | "desc";
 }
 
 export type RedisType = "string" | "hash" | "list" | "set" | "zset";

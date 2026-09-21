@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestBuildDataWhere(t *testing.T) {
 	value := "ada"
@@ -57,6 +60,28 @@ func TestBuildDataOrder(t *testing.T) {
 	}
 	if _, err := buildDataOrder([]dataSort{{Column: "missing", Direction: "asc"}}, map[string]bool{"id": true}, columns); err == nil {
 		t.Fatal("expected unknown sort column to be rejected")
+	}
+}
+
+func TestRowMapPairsColumnsWithReturningValues(t *testing.T) {
+	columns := []ColumnInfo{{Name: "id"}, {Name: "email"}}
+	id, email := "1", "ada@example.test"
+	got := rowMap(columns, []*string{&id, &email})
+	want := map[string]*string{"id": &id, "email": &email}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected row map: %#v", got)
+	}
+	// A row shorter than the column list (e.g. a malformed RETURNING result)
+	// must not panic — later columns are simply omitted.
+	if got := rowMap(columns, []*string{&id}); len(got) != 1 || got["id"] != &id {
+		t.Fatalf("expected a short row to be handled safely: %#v", got)
+	}
+}
+
+func TestColumnNames(t *testing.T) {
+	got := columnNames([]ColumnInfo{{Name: "id"}, {Name: "email"}})
+	if !reflect.DeepEqual(got, []string{"id", "email"}) {
+		t.Fatalf("unexpected column names: %#v", got)
 	}
 }
 

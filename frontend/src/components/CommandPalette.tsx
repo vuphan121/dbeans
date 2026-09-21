@@ -9,6 +9,7 @@ import { useSettingsStore } from "@/state/settings";
 import { useConnectionsStore } from "@/state/connections";
 import { useSchemaStore } from "@/state/schema";
 import { comboLabel, isMac } from "@/lib/platform";
+import { relativeTime } from "@/lib/time";
 
 export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const navigate = useNavigate();
@@ -81,7 +82,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                   >
                     <FileCode2 size={13} className="text-text-muted" />
                     <span>{s.name}</span>
-                    <span className="ml-auto text-[10.5px] text-text-faint">{s.used}</span>
+                    <span className="ml-auto text-[10.5px] text-text-faint">{relativeTime(s.updatedAt)}</span>
                   </Command.Item>
                 ))}
               </Command.Group>

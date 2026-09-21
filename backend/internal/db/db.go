@@ -162,6 +162,39 @@ CREATE TABLE IF NOT EXISTS secrets (
 	UNIQUE (user_id, name)
 );
 
+-- saved_queries are the named queries the workbench's tab strip saves and the
+-- sidebar/command palette list. Global per user (not tied to one connection),
+-- same as when they lived in the browser's localStorage. The client picks the
+-- id so the one-time localStorage import (POST /api/saved-queries/import) is
+-- idempotent: re-sending an already-imported id is a no-op.
+CREATE TABLE IF NOT EXISTS saved_queries (
+	id TEXT NOT NULL,
+	user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	sql TEXT NOT NULL,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	PRIMARY KEY (user_id, id)
+);
+
+-- saved_views are named Data-browser presets (filters, sort, page size,
+-- column layout) for one table of one connection. config is opaque to the
+-- server beyond being a JSON object — the frontend owns its shape.
+CREATE TABLE IF NOT EXISTS saved_views (
+	id TEXT NOT NULL,
+	user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+	schema_name TEXT NOT NULL,
+	table_name TEXT NOT NULL,
+	name TEXT NOT NULL,
+	config JSONB NOT NULL,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+	PRIMARY KEY (user_id, id),
+	UNIQUE (user_id, connection_id, schema_name, table_name, name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_saved_views_connection ON saved_views(user_id, connection_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_analytics_events_user_id ON analytics_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_analytics_events_created_at ON analytics_events(created_at DESC);

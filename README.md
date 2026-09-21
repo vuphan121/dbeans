@@ -6,7 +6,7 @@ dbeans lets you connect to your databases from a browser, browse schemas, direct
 
 ## Status
 
-Working app: real accounts, connections, schema browsing + SQL execution, a paginated table data editor (Postgres), and typed scheduled jobs (queries and HTTP requests) — see the docs below for exact scope and what's still stubbed/planned.
+Working app: real accounts, connections, schema browsing + SQL execution, a paginated table data editor (Postgres) that stays fast on large tables (estimated row totals, cancellable loads), imports CSV files atomically, remembers your view per table, and has an audit trail and one-click Undo, saved queries and named table views stored per user on the server, a per-connection query/mutation history view, and typed scheduled jobs (queries and HTTP requests) — see the docs below for exact scope and what's still stubbed/planned.
 
 ## Docs
 

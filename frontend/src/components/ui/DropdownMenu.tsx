@@ -8,15 +8,21 @@ export const DropdownMenuTrigger = DropdownPrimitive.Trigger;
 export function DropdownMenuContent({
   children,
   align = "end",
+  onCloseAutoFocus,
 }: {
   children: ReactNode;
   align?: "start" | "end" | "center";
+  // Called when the menu closes and would hand focus back to its trigger.
+  // preventDefault() it when the selected item opens a dialog, or the menu
+  // steals focus from that dialog's first field.
+  onCloseAutoFocus?: (event: Event) => void;
 }) {
   return (
     <DropdownPrimitive.Portal>
       <DropdownPrimitive.Content
         align={align}
         sideOffset={6}
+        onCloseAutoFocus={onCloseAutoFocus}
         className="z-50 min-w-[160px] overflow-hidden rounded-[8px] border border-border-elevated bg-bg-raised p-1 shadow-2xl"
       >
         {children}

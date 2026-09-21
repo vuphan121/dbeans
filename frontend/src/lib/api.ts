@@ -9,6 +9,12 @@ import type {
   QueryResult,
   DataFilter,
   DataSort,
+  DataViewConfig,
+  HistoryEntry,
+  ImportResult,
+  InsertRowResult,
+  SavedQuery,
+  SavedView,
   TableDataPage,
   RedisKeyEntry,
   SavedConnection,
@@ -24,6 +30,12 @@ export class ApiError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+// The server's own message for an ApiError, otherwise the caller's fallback
+// (a network failure or a bug shouldn't surface its raw text to the user).
+export function errorMessage(err: unknown, fallback: string): string {
+  return err instanceof ApiError ? err.message : fallback;
 }
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -156,15 +168,128 @@ export function updateCell(token: string, id: string, input: UpdateCellInput): P
   });
 }
 
+// signal lets the caller cancel an in-flight page load (the server sees the
+// disconnect and cancels the Postgres query). countMode "skip" asks the server
+// not to count rows at all — for when only the page or sort changed and the
+// caller already holds the total for this exact table + filter set.
 export function browseTableData(
   token: string,
   id: string,
-  input: { schema: string; table: string; filters: Omit<DataFilter, "id">[]; sorts?: DataSort[]; page: number; pageSize: number },
+  input: {
+    schema: string;
+    table: string;
+    filters: Omit<DataFilter, "id">[];
+    sorts?: DataSort[];
+    page: number;
+    pageSize: number;
+    countMode?: "auto" | "skip";
+  },
+  signal?: AbortSignal,
 ): Promise<TableDataPage> {
   return request(`/api/connections/${id}/table-data`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify(input),
+    signal,
+  });
+}
+
+// The explicit exact count behind the Data view's "Count exactly" — separate
+// from browseTableData so it can be cancelled without disturbing the page.
+export function countTableData(
+  token: string,
+  id: string,
+  input: { schema: string; table: string; filters: Omit<DataFilter, "id">[] },
+  signal?: AbortSignal,
+): Promise<{ total: number; totalKind: "exact" }> {
+  return request(`/api/connections/${id}/table-data/count`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+    signal,
+  });
+}
+
+export function importTableRows(
+  token: string,
+  id: string,
+  input: { schema: string; table: string; columns: string[]; rows: (string | null)[][]; dryRun: boolean },
+): Promise<ImportResult> {
+  return request(`/api/connections/${id}/table-import`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(input),
+  });
+}
+
+export function listSavedViews(token: string, id: string): Promise<SavedView[]> {
+  return request(`/api/connections/${id}/views`, { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export function createSavedView(
+  token: string,
+  id: string,
+  view: { id: string; schema: string; table: string; name: string; config: DataViewConfig },
+): Promise<SavedView> {
+  return request(`/api/connections/${id}/views`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(view),
+  });
+}
+
+export function updateSavedView(
+  token: string,
+  id: string,
+  viewId: string,
+  update: { name?: string; config?: DataViewConfig },
+): Promise<{ ok: boolean }> {
+  return request(`/api/connections/${id}/views/${viewId}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(update),
+  });
+}
+
+export function deleteSavedView(token: string, id: string, viewId: string): Promise<{ ok: boolean }> {
+  return request(`/api/connections/${id}/views/${viewId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+}
+
+export function listSavedQueries(token: string): Promise<SavedQuery[]> {
+  return request("/api/saved-queries", { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export function createSavedQuery(token: string, query: { id: string; name: string; sql: string }): Promise<SavedQuery> {
+  return request("/api/saved-queries", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(query),
+  });
+}
+
+export function updateSavedQuery(token: string, id: string, update: { name?: string; sql?: string }): Promise<{ ok: boolean }> {
+  return request(`/api/saved-queries/${id}`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify(update),
+  });
+}
+
+export function deleteSavedQuery(token: string, id: string): Promise<{ ok: boolean }> {
+  return request(`/api/saved-queries/${id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+}
+
+// One-time move of queries saved in this browser's localStorage (before saved
+// queries lived on the server). Idempotent server-side: ids that already exist
+// are skipped. Resolves to the user's full list afterward.
+export function importSavedQueries(token: string, queries: { id: string; name: string; sql: string }[]): Promise<SavedQuery[]> {
+  return request("/api/saved-queries/import", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ queries }),
   });
 }
 
@@ -175,7 +300,7 @@ export interface TableRowMutation {
   key?: Record<string, string | null>;
 }
 
-export function insertTableRow(token: string, id: string, input: TableRowMutation): Promise<{ ok: boolean; rowsAffected: number }> {
+export function insertTableRow(token: string, id: string, input: TableRowMutation): Promise<InsertRowResult> {
   return request(`/api/connections/${id}/table-rows`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
@@ -212,6 +337,12 @@ export function executeSchemaChange(token: string, id: string, sql: string): Pro
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
     body: JSON.stringify({ sql }),
+  });
+}
+
+export function getConnectionHistory(token: string, id: string, limit = 100): Promise<HistoryEntry[]> {
+  return request(`/api/connections/${id}/history?limit=${limit}`, {
+    headers: { Authorization: `Bearer ${token}` },
   });
 }
 

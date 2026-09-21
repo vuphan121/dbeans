@@ -9,6 +9,7 @@ import { ResizeDivider } from "./ResizeDivider";
 import { ConnectionGraphs } from "./ConnectionGraphs";
 import { SchemaDiagram } from "./SchemaDiagram";
 import { DataBrowser } from "./DataBrowser";
+import { HistoryPanel } from "./HistoryPanel";
 import { Button } from "@/components/ui/Button";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { useWorkbenchStore } from "@/state/workbench";
@@ -29,7 +30,7 @@ export function SqlWorkbench({
   const { theme, editorFontSize } = useSettingsStore();
   const token = useAuthStore((s) => s.token);
   const resolvedTheme = theme === "system" ? (document.documentElement.getAttribute("data-theme") as "dark" | "light" | null) ?? "dark" : theme;
-  const [view, setView] = useState<"query" | "data" | "graphs" | "erd">("query");
+  const [view, setView] = useState<"query" | "data" | "history" | "graphs" | "erd">("query");
   const [running, setRunning] = useState(false);
   const [editorHeight, setEditorHeight] = useState(296);
   const [resultByTab, setResultByTab] = useState<Record<string, QueryResult>>({});
@@ -73,16 +74,17 @@ export function SqlWorkbench({
       topBarCenter={
         <div className="flex w-full items-stretch">
           <div className="flex shrink-0 items-center border-r border-border-subtle px-3">
-            <SegmentedControl<"query" | "data" | "graphs" | "erd">
+            <SegmentedControl<"query" | "data" | "history" | "graphs" | "erd">
               options={[
                 { value: "query", label: "Query" },
                 { value: "data", label: "Data" },
+                { value: "history", label: "History" },
                 { value: "graphs", label: "Graphs" },
                 { value: "erd", label: "ERD" },
               ]}
               value={view}
               onChange={setView}
-              className="w-[258px]"
+              className="w-[320px]"
             />
           </div>
           {view === "query" && <TabStrip />}
@@ -90,7 +92,9 @@ export function SqlWorkbench({
       }
     >
       {view === "data" ? (
-        <DataBrowser connection={connection} onOpenQuery={(tableName) => { openTable(tableName); setView("query"); }} onOpenSql={(title, sql) => { openSql(title, sql); setView("query"); }} />
+        <DataBrowser key={connection.id} connection={connection} onOpenQuery={(tableName) => { openTable(tableName); setView("query"); }} onOpenSql={(title, sql) => { openSql(title, sql); setView("query"); }} />
+      ) : view === "history" ? (
+        <HistoryPanel connection={connection} onOpenSql={(title, sql) => { openSql(title, sql); setView("query"); }} />
       ) : view === "graphs" ? (
         <ConnectionGraphs connection={connection} />
       ) : view === "erd" ? (

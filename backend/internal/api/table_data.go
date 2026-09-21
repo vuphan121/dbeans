@@ -3,13 +3,16 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
+	"dbeans/backend/internal/analytics"
 	"dbeans/backend/internal/auth"
 )
 
@@ -26,6 +29,10 @@ type browseTableRequest struct {
 	Page     int          `json:"page"`
 	PageSize int          `json:"pageSize"`
 	Sorts    []dataSort   `json:"sorts"`
+	// CountMode is "auto" (the default: pick the cheapest honest row count) or
+	// "skip" (don't count at all — the caller already has a count for this
+	// exact table + filter set, e.g. when only the page or sort changed).
+	CountMode string `json:"countMode"`
 }
 
 type dataSort struct {
@@ -34,11 +41,19 @@ type dataSort struct {
 }
 
 type tableDataResponse struct {
-	Columns  []ColumnInfo `json:"columns"`
-	Rows     [][]*string  `json:"rows"`
-	Total    int64        `json:"total"`
-	Page     int          `json:"page"`
-	PageSize int          `json:"pageSize"`
+	Columns []ColumnInfo `json:"columns"`
+	Rows    [][]*string  `json:"rows"`
+	// Total is the best row count available and TotalKind says how far to
+	// trust it: "exact", "estimated" (planner statistics), "lower-bound" (at
+	// least this many — the bounded count hit its cap), "unknown" (the bounded
+	// count timed out), or "skipped" (CountMode "skip"; Total is 0).
+	Total     int64  `json:"total"`
+	TotalKind string `json:"totalKind"`
+	// HasMore is always exact, independent of Total: whether any row exists
+	// past this page. It's what keeps Next/Previous correct when Total isn't.
+	HasMore  bool `json:"hasMore"`
+	Page     int  `json:"page"`
+	PageSize int  `json:"pageSize"`
 }
 
 type tableRowMutation struct {
@@ -192,6 +207,166 @@ func buildDataOrder(sorts []dataSort, known map[string]bool, columns []ColumnInf
 	return " ORDER BY " + strings.Join(parts, ", "), nil
 }
 
+const (
+	// countCap is the most rows the bounded count will scan before giving up
+	// and reporting "N+". It is also the size a table's planner estimate must
+	// reach before that estimate replaces counting altogether.
+	countCap = 50_000
+	// boundedCountTimeoutMs keeps the count that runs on every table open from
+	// stalling the page on a huge, unindexed filter; exactCountTimeoutMs is the
+	// budget for the count the user explicitly asks for.
+	boundedCountTimeoutMs = 3_000
+	exactCountTimeoutMs   = 15_000
+)
+
+const (
+	countExact      = "exact"
+	countEstimated  = "estimated"
+	countLowerBound = "lower-bound"
+	countUnknown    = "unknown"
+	countSkipped    = "skipped"
+)
+
+type rowCount struct {
+	Total int64
+	Kind  string
+}
+
+// isStatementTimeout reports whether err is Postgres cancelling a statement
+// for exceeding statement_timeout (SQLSTATE 57014, query_canceled).
+func isStatementTimeout(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "57014"
+}
+
+// countWithTimeout runs a count query inside a transaction so the
+// statement_timeout is SET LOCAL — scoped to that transaction and gone once it
+// rolls back, never leaking onto the connection's later queries. limit <= 0
+// means an unbounded count(*); otherwise at most limit+1 matching rows are
+// ever scanned.
+func countWithTimeout(ctx context.Context, conn *pgx.Conn, qualified, where string, args []any, limit int, timeoutMs int) (int64, error) {
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL statement_timeout = %d", timeoutMs)); err != nil {
+		return 0, err
+	}
+	stmt := "SELECT count(*) FROM " + qualified + where
+	if limit > 0 {
+		stmt = fmt.Sprintf("SELECT count(*) FROM (SELECT 1 FROM %s%s LIMIT %d) AS capped", qualified, where, limit+1)
+	}
+	var total int64
+	if err := tx.QueryRow(ctx, stmt, args...).Scan(&total); err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
+// estimatedRowCount reads the planner's own row estimate (pg_class.reltuples)
+// for an ordinary or partitioned table — free, but only as fresh as the last
+// ANALYZE. ok is false when there's no usable estimate (never analyzed
+// reports -1 on PG14+, 0 before that; both are handled by the caller falling
+// back to a bounded count).
+func estimatedRowCount(ctx context.Context, conn *pgx.Conn, schema, table string) (int64, bool) {
+	var estimate int64
+	err := conn.QueryRow(ctx, `
+		SELECT c.reltuples::bigint
+		FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('r', 'p')`, schema, table).Scan(&estimate)
+	if err != nil || estimate <= 0 {
+		return 0, false
+	}
+	return estimate, true
+}
+
+// autoRowCount picks the cheapest count that is still honest about what it is,
+// so opening a multi-million-row table never begins with a full count(*):
+//   - an unfiltered table whose planner estimate is already large reports that
+//     estimate ("estimated") without touching the table;
+//   - everything else counts at most countCap rows under a short statement
+//     timeout: exact below the cap, "lower-bound" (N+) at it, "unknown" if
+//     even that bounded scan timed out (an unindexed filter on a huge table).
+func autoRowCount(ctx context.Context, conn *pgx.Conn, schema, table, tableType string, unfiltered bool, qualified, where string, args []any) (rowCount, error) {
+	if unfiltered && tableType == "BASE TABLE" {
+		if estimate, ok := estimatedRowCount(ctx, conn, schema, table); ok && estimate >= countCap {
+			return rowCount{Total: estimate, Kind: countEstimated}, nil
+		}
+	}
+	n, err := countWithTimeout(ctx, conn, qualified, where, args, countCap, boundedCountTimeoutMs)
+	if err != nil {
+		if isStatementTimeout(err) {
+			return rowCount{Kind: countUnknown}, nil
+		}
+		return rowCount{}, err
+	}
+	if n > countCap {
+		return rowCount{Total: countCap, Kind: countLowerBound}, nil
+	}
+	return rowCount{Total: n, Kind: countExact}, nil
+}
+
+// logTableMutation records one Data-editor mutation to the analytics_events
+// audit trail — the same table RunConnectionQuery's frontend caller logs
+// query runs into (event_type "query_run"), read back by
+// ListConnectionHistory. Best-effort like analytics.LogEvent itself: a
+// logging failure never fails the request whose mutation already committed.
+func (s *Server) logTableMutation(ctx context.Context, r *http.Request, user *auth.User, eventType string, payload map[string]any) {
+	_ = analytics.LogEvent(ctx, s.Pool, bearerToken(r), &user.ID, eventType, payload)
+}
+
+func columnNames(columns []ColumnInfo) []string {
+	names := make([]string, len(columns))
+	for i, c := range columns {
+		names[i] = c.Name
+	}
+	return names
+}
+
+// rowMap pairs a RETURNING row's positional values back up with their
+// column names, so an audit-log payload reads as {"email": "...", ...}
+// rather than a bare positional array.
+func rowMap(columns []ColumnInfo, row []*string) map[string]*string {
+	m := make(map[string]*string, len(columns))
+	for i, c := range columns {
+		if i < len(row) {
+			m[c.Name] = row[i]
+		}
+	}
+	return m
+}
+
+// execReturningRow runs a statement expected to return exactly one row (an
+// INSERT ... RETURNING *) and decodes it the same way BrowseTableData
+// decodes query results — forcing text format so every value round-trips as
+// a generic string. Returns a nil row if the statement affected no rows.
+func execReturningRow(ctx context.Context, conn *pgx.Conn, stmt string, args ...any) ([]*string, int64, error) {
+	queryArgs := append([]any{pgx.QueryResultFormats{pgx.TextFormatCode}}, args...)
+	rows, err := conn.Query(ctx, stmt, queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var row []*string
+	var count int64
+	for rows.Next() {
+		raw := rows.RawValues()
+		row = make([]*string, len(raw))
+		for i, v := range raw {
+			if v != nil {
+				str := string(v)
+				row[i] = &str
+			}
+		}
+		count++
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return row, count, nil
+}
+
 func (s *Server) withTableConnection(w http.ResponseWriter, r *http.Request, mutate bool, fn func(context.Context, *pgx.Conn, sqlConnFields)) {
 	user, err := auth.Resolve(r.Context(), s.Pool, bearerToken(r))
 	if err != nil {
@@ -231,7 +406,7 @@ func (s *Server) BrowseTableData(w http.ResponseWriter, r *http.Request) {
 		req.PageSize = 100
 	}
 	s.withTableConnection(w, r, false, func(ctx context.Context, conn *pgx.Conn, _ sqlConnFields) {
-		columns, known, _, err := tableMetadata(ctx, conn, req.Schema, req.Table)
+		columns, known, tableType, err := tableMetadata(ctx, conn, req.Schema, req.Table)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -242,10 +417,13 @@ func (s *Server) BrowseTableData(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		qualified := pgx.Identifier{req.Schema, req.Table}.Sanitize()
-		var total int64
-		if err := conn.QueryRow(ctx, "SELECT count(*) FROM "+qualified+where, args...).Scan(&total); err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
-			return
+		count := rowCount{Kind: countSkipped}
+		if req.CountMode != "skip" {
+			count, err = autoRowCount(ctx, conn, req.Schema, req.Table, tableType, len(req.Filters) == 0, qualified, where, args)
+			if err != nil {
+				writeError(w, http.StatusBadGateway, err.Error())
+				return
+			}
 		}
 		// RawValues returns bytes in the server-selected wire format. Force text
 		// for every result column so integers, timestamps, UUIDs, and other
@@ -253,7 +431,9 @@ func (s *Server) BrowseTableData(w http.ResponseWriter, r *http.Request) {
 		// strings, matching RunConnectionQuery's contract.
 		queryArgs := []any{pgx.QueryResultFormats{pgx.TextFormatCode}}
 		queryArgs = append(queryArgs, args...)
-		queryArgs = append(queryArgs, req.PageSize, req.Page*req.PageSize)
+		// One row past the page: whether it exists is HasMore, which stays exact
+		// even when the total is only an estimate.
+		queryArgs = append(queryArgs, req.PageSize+1, req.Page*req.PageSize)
 		order, err := buildDataOrder(req.Sorts, known, columns)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -282,7 +462,52 @@ func (s *Server) BrowseTableData(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, tableDataResponse{Columns: columns, Rows: data, Total: total, Page: req.Page, PageSize: req.PageSize})
+		hasMore := len(data) > req.PageSize
+		if hasMore {
+			data = data[:req.PageSize]
+		}
+		writeJSON(w, http.StatusOK, tableDataResponse{Columns: columns, Rows: data, Total: count.Total, TotalKind: count.Kind, HasMore: hasMore, Page: req.Page, PageSize: req.PageSize})
+	})
+}
+
+type countTableRequest struct {
+	Schema  string       `json:"schema"`
+	Table   string       `json:"table"`
+	Filters []dataFilter `json:"filters"`
+}
+
+// CountTableData is the explicit "count exactly" the Data view offers when the
+// row total it opened with is only an estimate or a lower bound. It's its own
+// endpoint (rather than a flag on table-data) so the count can run, and be
+// cancelled, independently of loading a page — and it reports a timeout as an
+// error instead of silently degrading, since the caller asked for exactness.
+func (s *Server) CountTableData(w http.ResponseWriter, r *http.Request) {
+	var req countTableRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Schema == "" || req.Table == "" {
+		writeError(w, http.StatusBadRequest, "schema and table are required")
+		return
+	}
+	s.withTableConnection(w, r, false, func(ctx context.Context, conn *pgx.Conn, _ sqlConnFields) {
+		_, known, _, err := tableMetadata(ctx, conn, req.Schema, req.Table)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		where, args, err := buildDataWhere(req.Filters, known)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		total, err := countWithTimeout(ctx, conn, pgx.Identifier{req.Schema, req.Table}.Sanitize(), where, args, 0, exactCountTimeoutMs)
+		if err != nil {
+			if isStatementTimeout(err) {
+				writeError(w, http.StatusGatewayTimeout, "Counting every row took too long. Add a filter to narrow it down.")
+				return
+			}
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"total": total, "totalKind": countExact})
 	})
 }
 
@@ -312,8 +537,14 @@ func (s *Server) InsertTableRow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
+	user, err := auth.Resolve(r.Context(), s.Pool, bearerToken(r))
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+	connID := chi.URLParam(r, "id")
 	s.withTableConnection(w, r, true, func(ctx context.Context, conn *pgx.Conn, _ sqlConnFields) {
-		_, known, tableType, err := tableMetadata(ctx, conn, req.Schema, req.Table)
+		columns, known, tableType, err := tableMetadata(ctx, conn, req.Schema, req.Table)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -326,28 +557,32 @@ func (s *Server) InsertTableRow(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		// RETURNING * hands back the row exactly as the database committed
+		// it — including generated/identity defaults the request never sent
+		// a value for — so both the audit log and the frontend's Undo can
+		// address the new row by its real primary key, not a guessed one.
+		var stmt string
+		var args []any
 		if len(req.Values) == 0 {
-			tag, err := conn.Exec(ctx, "INSERT INTO "+pgx.Identifier{req.Schema, req.Table}.Sanitize()+" DEFAULT VALUES")
-			if err != nil {
-				writeError(w, http.StatusBadGateway, err.Error())
-				return
+			stmt = "INSERT INTO " + pgx.Identifier{req.Schema, req.Table}.Sanitize() + " DEFAULT VALUES RETURNING *"
+		} else {
+			cols, placeholders := []string{}, []string{}
+			for col, value := range req.Values {
+				cols = append(cols, pgx.Identifier{col}.Sanitize())
+				args = append(args, value)
+				placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
 			}
-			writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "rowsAffected": tag.RowsAffected()})
-			return
+			stmt = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) RETURNING *", pgx.Identifier{req.Schema, req.Table}.Sanitize(), strings.Join(cols, ", "), strings.Join(placeholders, ", "))
 		}
-		cols, placeholders, args := []string{}, []string{}, []any{}
-		for col, value := range req.Values {
-			cols = append(cols, pgx.Identifier{col}.Sanitize())
-			args = append(args, value)
-			placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
-		}
-		stmt := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", pgx.Identifier{req.Schema, req.Table}.Sanitize(), strings.Join(cols, ", "), strings.Join(placeholders, ", "))
-		tag, err := conn.Exec(ctx, stmt, args...)
+		row, count, err := execReturningRow(ctx, conn, stmt, args...)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "rowsAffected": tag.RowsAffected()})
+		s.logTableMutation(ctx, r, user, "row_insert", map[string]any{
+			"connectionId": connID, "schema": req.Schema, "table": req.Table, "row": rowMap(columns, row), "rowsAffected": count,
+		})
+		writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "rowsAffected": count, "columns": columnNames(columns), "row": row})
 	})
 }
 
@@ -394,6 +629,12 @@ func (s *Server) UpdateTableRow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
+	user, err := auth.Resolve(r.Context(), s.Pool, bearerToken(r))
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+	connID := chi.URLParam(r, "id")
 	s.withTableConnection(w, r, true, func(ctx context.Context, conn *pgx.Conn, _ sqlConnFields) {
 		columns, known, tableType, err := tableMetadata(ctx, conn, req.Schema, req.Table)
 		if err != nil {
@@ -433,6 +674,9 @@ func (s *Server) UpdateTableRow(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
+		s.logTableMutation(ctx, r, user, "row_update", map[string]any{
+			"connectionId": connID, "schema": req.Schema, "table": req.Table, "key": req.Key, "values": req.Values, "rowsAffected": tag.RowsAffected(),
+		})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "rowsAffected": tag.RowsAffected()})
 	})
 }
@@ -443,6 +687,12 @@ func (s *Server) DeleteTableRow(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
+	user, err := auth.Resolve(r.Context(), s.Pool, bearerToken(r))
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+	connID := chi.URLParam(r, "id")
 	s.withTableConnection(w, r, true, func(ctx context.Context, conn *pgx.Conn, _ sqlConnFields) {
 		columns, known, tableType, err := tableMetadata(ctx, conn, req.Schema, req.Table)
 		if err != nil {
@@ -471,6 +721,9 @@ func (s *Server) DeleteTableRow(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
+		s.logTableMutation(ctx, r, user, "row_delete", map[string]any{
+			"connectionId": connID, "schema": req.Schema, "table": req.Table, "key": req.Key, "rowsAffected": tag.RowsAffected(),
+		})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "rowsAffected": tag.RowsAffected()})
 	})
 }
@@ -481,6 +734,12 @@ func (s *Server) BulkDeleteTableRows(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "schema, table, and 1-500 row keys are required")
 		return
 	}
+	user, err := auth.Resolve(r.Context(), s.Pool, bearerToken(r))
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+	connID := chi.URLParam(r, "id")
 	s.withTableConnection(w, r, true, func(ctx context.Context, conn *pgx.Conn, _ sqlConnFields) {
 		columns, known, tableType, err := tableMetadata(ctx, conn, req.Schema, req.Table)
 		if err != nil {
@@ -519,6 +778,9 @@ func (s *Server) BulkDeleteTableRows(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
+		s.logTableMutation(ctx, r, user, "bulk_row_delete", map[string]any{
+			"connectionId": connID, "schema": req.Schema, "table": req.Table, "keys": req.Keys, "rowsAffected": affected,
+		})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "rowsAffected": affected})
 	})
 }
@@ -539,11 +801,18 @@ func (s *Server) ExecuteSchemaChange(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	user, err := auth.Resolve(r.Context(), s.Pool, bearerToken(r))
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+	connID := chi.URLParam(r, "id")
 	s.withTableConnection(w, r, true, func(ctx context.Context, conn *pgx.Conn, _ sqlConnFields) {
 		if _, err := conn.Exec(ctx, sql); err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
+		s.logTableMutation(ctx, r, user, "schema_change", map[string]any{"connectionId": connID, "sql": sql})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
 }

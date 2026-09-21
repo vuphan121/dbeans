@@ -9,10 +9,12 @@ import Jobs from "@/pages/Jobs";
 import AddJob from "@/pages/AddJob";
 import Secrets from "@/pages/Secrets";
 import { AppNavRail } from "@/components/AppNavRail";
+import { ToastHost } from "@/components/ui/Toast";
 import { useAuthStore } from "@/state/auth";
 import { useConnectionsStore } from "@/state/connections";
 import { useJobsStore } from "@/state/jobs";
 import { useSecretsStore } from "@/state/secrets";
+import { useSnippetsStore } from "@/state/snippets";
 import { applyThemeToDocument, useSettingsStore, watchSystemTheme } from "@/state/settings";
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -33,6 +35,7 @@ export default function App() {
   const loadConnections = useConnectionsStore((s) => s.loadConnections);
   const loadJobs = useJobsStore((s) => s.loadJobs);
   const loadSecrets = useSecretsStore((s) => s.loadSecrets);
+  const loadSnippets = useSnippetsStore((s) => s.loadSnippets);
 
   useEffect(() => {
     watchSystemTheme();
@@ -48,8 +51,9 @@ export default function App() {
       loadConnections();
       loadJobs();
       loadSecrets();
+      loadSnippets();
     }
-  }, [isUnlocked, token, loadConnections, loadJobs, loadSecrets]);
+  }, [isUnlocked, token, loadConnections, loadJobs, loadSecrets, loadSnippets]);
 
   return (
     <BrowserRouter>
@@ -121,6 +125,7 @@ export default function App() {
         />
         <Route path="*" element={<Navigate to="/connections" replace />} />
       </Routes>
+      <ToastHost />
     </BrowserRouter>
   );
 }

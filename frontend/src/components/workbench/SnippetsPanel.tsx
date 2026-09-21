@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronRight, ChevronDown, FileCode2 } from "lucide-react";
 import { useSnippetsStore } from "@/state/snippets";
 import { useWorkbenchStore } from "@/state/workbench";
+import { relativeTime } from "@/lib/time";
 
 export function SnippetsPanel() {
   const [open, setOpen] = useState(true);
@@ -39,7 +40,7 @@ export function SnippetsPanel() {
             >
               <FileCode2 size={10} className="shrink-0 text-text-ghost" />
               <span className="truncate text-[11px] text-text-secondary">{s.name}</span>
-              <span className="ml-auto shrink-0 text-[10px] text-text-quiet">{s.used}</span>
+              <span className="ml-auto shrink-0 text-[10px] text-text-quiet">{relativeTime(s.updatedAt)}</span>
             </div>
           ))}
         </div>

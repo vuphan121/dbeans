@@ -24,13 +24,15 @@ export function TabStrip() {
   // Saving never prompts for a name — it uses the tab's current title
   // as-is (e.g. "untitled 1"), so it's a single click. Use "Rename" first
   // (or after) if you want something more descriptive.
-  function handleSave(tab: WorkbenchTab) {
+  async function handleSave(tab: WorkbenchTab) {
     if (!tab.sql?.trim()) return;
     if (tab.snippetId) {
       updateSnippet(tab.snippetId, tab.sql);
     } else {
-      const snippet = addSnippet(tab.title, tab.sql);
-      linkTabToSnippet(tab.id, snippet.id, tab.title);
+      // The tab is only linked once the server has the query, so a failed
+      // save (which toasts) never leaves a tab pointing at nothing.
+      const snippet = await addSnippet(tab.title, tab.sql);
+      if (snippet) linkTabToSnippet(tab.id, snippet.id, tab.title);
     }
   }
 
@@ -139,7 +141,7 @@ export function TabStrip() {
             </ContextMenuTrigger>
             <ContextMenuContent>
               <ContextMenuItem
-                onClick={() => canSave && handleSave(tab)}
+                onClick={() => canSave && void handleSave(tab)}
                 className={!canSave ? "pointer-events-none opacity-40" : undefined}
               >
                 Save

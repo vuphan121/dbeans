@@ -129,17 +129,84 @@ export interface DataFilter {
   value: string;
 }
 
+/**
+ * How far to trust TableDataPage.total: "exact"; "estimated" (planner
+ * statistics, may be stale); "lower-bound" (at least this many — the bounded
+ * count hit its cap); "unknown" (the bounded count timed out); "skipped" (the
+ * server was told not to count, so the caller keeps the total it already has).
+ */
+export type TotalKind = "exact" | "estimated" | "lower-bound" | "unknown" | "skipped";
+
 export interface TableDataPage {
   columns: ColumnInfo[];
   rows: (string | null)[][];
   total: number;
+  totalKind: TotalKind;
+  /** Always exact: whether any row exists past this page. */
+  hasMore: boolean;
   page: number;
   pageSize: number;
+}
+
+export interface ImportRowError {
+  /** 1-based position among the rows sent. */
+  row: number;
+  message: string;
+}
+
+export interface ImportResult {
+  ok: boolean;
+  dryRun: boolean;
+  rowsInserted: number;
+  errors?: ImportRowError[];
+  moreErrors?: boolean;
+}
+
+/** A Data-browser preset: what a saved view stores and what is remembered per table. */
+export interface DataViewConfig {
+  filters: Omit<DataFilter, "id">[];
+  sorts: DataSort[];
+  pageSize: number;
+  columnOrder: string[];
+  hiddenColumns: string[];
+}
+
+export interface SavedView {
+  id: string;
+  schema: string;
+  table: string;
+  name: string;
+  config: DataViewConfig;
+  updatedAt: string;
+}
+
+export interface SavedQuery {
+  id: string;
+  name: string;
+  sql: string;
+  updatedAt: string;
 }
 
 export interface DataSort {
   column: string;
   direction: "asc" | "desc";
+}
+
+export interface InsertRowResult {
+  ok: boolean;
+  rowsAffected: number;
+  /** Present when the insert affected a row — the column names its "row" values are positionally aligned to (from RETURNING *), used to rebuild the new row's primary key for Undo. */
+  columns?: string[];
+  row?: (string | null)[];
+}
+
+export type HistoryEventType = "query_run" | "row_insert" | "row_update" | "row_delete" | "bulk_row_delete" | "schema_change" | "table_import";
+
+export interface HistoryEntry {
+  id: number;
+  eventType: HistoryEventType;
+  payload: Record<string, unknown>;
+  createdAt: string;
 }
 
 export type RedisType = "string" | "hash" | "list" | "set" | "zset";

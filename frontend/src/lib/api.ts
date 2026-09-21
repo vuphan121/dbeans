@@ -145,12 +145,19 @@ export function getConnectionSchema(token: string, id: string): Promise<Connecti
   return request(`/api/connections/${id}/schema`, { headers: { Authorization: `Bearer ${token}` } });
 }
 
-export function runQuery(token: string, id: string, sql: string, renderTemplate?: boolean): Promise<QueryResult> {
-  return request(`/api/connections/${id}/query`, {
+// signal lets the caller cancel a running query: aborting it also terminates
+// the Postgres session executing it (see cancelServerWorkOnAbort), which rolls
+// back an in-flight write rather than leaving it half-applied.
+export function runQuery(token: string, id: string, sql: string, renderTemplate?: boolean, signal?: AbortSignal): Promise<QueryResult> {
+  const requestId = crypto.randomUUID();
+  const result = request<QueryResult>(`/api/connections/${id}/query`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ sql, renderTemplate: renderTemplate || undefined }),
+    body: JSON.stringify({ sql, renderTemplate: renderTemplate || undefined, requestId }),
+    signal,
   });
+  cancelServerWorkOnAbort(token, id, requestId, signal, result);
+  return result;
 }
 
 export interface UpdateCellInput {
@@ -171,10 +178,11 @@ export function updateCell(token: string, id: string, input: UpdateCellInput): P
 }
 
 // Asks the server to terminate the Postgres session running an aborted page
-// load or count (see cancelOnAbort for why aborting the fetch isn't enough).
+// load, count, or SQL-editor query (see cancelOnAbort for why aborting the
+// fetch isn't enough).
 function cancelServerWorkOnAbort(token: string, connectionId: string, requestId: string, signal: AbortSignal | undefined, settled: Promise<unknown>) {
   cancelOnAbort(signal, settled, () =>
-    request<{ terminated: number }>(`/api/connections/${connectionId}/table-data/cancel`, {
+    request<{ terminated: number }>(`/api/connections/${connectionId}/cancel`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
       body: JSON.stringify({ requestId }),

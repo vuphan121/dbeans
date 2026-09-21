@@ -53,7 +53,7 @@ Minimal, centered username + password fields on a calm background. No marketing 
 ### Workbench (core screen)
 As laid out in §2. Schema tree nodes expand lazily with subtle loading affordance (skeleton row, not a spinner takeover). Double-clicking a table opens a pre-filled `SELECT *` query tab; the dedicated Data view is the quicker, SQL-free route for routine browsing and row maintenance.
 
-A "Query" / "Data" / "Graphs" / "ERD" switcher sits in the workbench's top bar, next to the query tabs. Data swaps the editor+results split for a compact table toolbar, filter row, grid, and pagination footer while keeping the schema sidebar and connection context visible. Graphs swaps the editor+results pane for per-connection health and metrics; ERD swaps it for a real relationship diagram. Switching between views preserves open query tabs and unsaved SQL.
+A "Query" / "Data" / "History" / "Graphs" / "ERD" switcher sits in the workbench's top bar, next to the query tabs. Data swaps the editor+results split for a compact table toolbar, filter row, grid, and pagination footer while keeping the schema sidebar and connection context visible. History lists the connection's past query runs and Data-editor changes as a plain time-ordered table; a query run reopens in a new tab without executing. Graphs swaps the editor+results pane for per-connection health and metrics; ERD swaps it for a real relationship diagram. Switching between views preserves open query tabs and unsaved SQL.
 
 ### Scheduled jobs (canvas)
 A second pannable/zoomable board, alongside the connections one — one card per scheduled job (name, type/target, cron, last status), positioned and resized the same way connection cards are. Creating a job first asks for its action type: a query shows connection/SQL/check fields, while an HTTP request shows method/URL/headers/body fields. More types can join this selector later without changing the board. Dependencies between jobs are drawn as arrows directly on the canvas (smoothstep/orthogonal routing, not freeform curves, so several arrows converging on one job don't tangle) rather than only being visible as text in a form. Right-clicking a card gives Edit/Pause/Remove; running a job on demand and reviewing its history — a 9-week calendar of run status, colored by that date's latest run status, plus a recent-runs list — lives in the job's own edit panel instead, so the canvas stays a map of the pipeline rather than an action surface.
@@ -65,7 +65,12 @@ A second pannable/zoomable board, alongside the connections one — one card per
 - Column headers sort on click and expose quiet PK/FK/type context. A secondary Columns dialog handles hide/reorder controls while narrow drag handles resize in place; row checkboxes reveal bulk actions only after selection.
 - Views share the table selector but carry a clear read-only notice. Schema changes live behind one compact **Schema** action; its form and exact DDL preview sit side by side, followed by **Open in query** or **Review & run** rather than a one-click mutation.
 - A filter action adds compact column/operator/value controls above the grid. Multiple filters combine with `AND`; Apply commits the draft filters and Clear restores the unfiltered table.
-- The footer always shows total rows, page position, page-size control, and a read-only badge where applicable. Table browsing is paginated server-side so the browser never holds an unbounded table in memory.
+- The footer always shows a row total labelled for how it was obtained (`1,234` exact, `~1.2M` estimate, `50,000+` lower bound, `?` unknown — with a **Count exactly** action whenever it isn't exact), page position, page-size control, and a read-only badge where applicable. Paging is server-side so the browser never holds an unbounded table in memory, and Next/Previous never depend on the total.
+- The table selector is a searchable popover (type to filter, arrows + Enter), with **Recent** and pinned tables first. The Data view remembers each table's filters, sort, page size, and column layout per connection.
+- **Views**, beside Filter, saves the applied filters, sort, page size, and column layout under a name for that table. A row is just the name; rename (F2), overwrite (Ctrl/⌘+S, behind a confirm), and delete sit on the row.
+- **Import** (writable tables) is one dialog: choose a file, map columns (auto-matched by name), **Validate**, then **Import** behind a confirm. Problems are listed per row, inline; nothing is written until the confirm.
+- While a page loads, Refresh becomes ✕ and cancels it.
+- After an add, edit, or delete a short-lived **Undo** toast appears — the one place a toast is right: a background confirmation with a time-boxed action.
 
 ### Settings
 One page, sections for: Appearance (theme), Security (change account password, session settings), Connections (manage/delete saved ones), Snippets (manage saved queries). No nested settings-within-settings maze.
@@ -81,10 +86,11 @@ One page, sections for: Appearance (theme), Security (change account password, s
 ## 5. Interaction details worth getting right
 
 - `Cmd/Ctrl+Enter` runs the current query (or selection if text is selected).
-- Running queries show a cancel affordance immediately, not just after a timeout.
+- Running queries show a cancel affordance immediately, not just after a timeout: **Run** turns into **Cancel** for the tab that's running (Esc does the same; runs are per tab), and a cancelled run shows a neutral “Query cancelled” instead of an error.
 - Autocomplete in the SQL editor is schema-aware (knows real table/column names for the active connection), not just SQL-keyword completion.
 - Switching connections/tabs preserves scroll position and unsaved query text.
 - Export (CSV/JSON) is a lightweight menu action from the results grid, not a separate wizard flow.
+- Menu rows with secondary actions keep them keyboard-reachable through shortcuts on the highlighted row (F2 rename, Ctrl/⌘+S overwrite), because arrow-key navigation can't reach buttons inside a row. Keep shortcuts in the tooltip, not in body text.
 - Toasts are used only for background/async confirmations (e.g., "Export ready"); anything blocking or error-related is shown inline where it's relevant.
 
 ## 6. Accessibility baseline

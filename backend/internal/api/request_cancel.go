@@ -9,14 +9,15 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Explicit cancellation of in-flight Data-view page loads and counts.
+// Explicit cancellation of in-flight requests that run user-visible SQL: Data-view
+// page loads and counts, and the SQL editor's Run.
 //
 // Aborting the browser's fetch is not enough on serverless hosts: Vercel does
 // not pass a client disconnect through to the Go handler, so the Postgres query
 // it started keeps running to completion (measured on production: a cancelled
 // 5-second query stayed active for its full duration). So each page load and
 // count carries a client-chosen request id, the statements it runs are tagged
-// with it, and cancelling calls CancelTableRequest, which terminates the
+// with it, and cancelling calls CancelRequest, which terminates the
 // matching session from a separate request.
 //
 // Tagging is a leading SQL comment rather than a session setting such as
@@ -83,12 +84,14 @@ type cancelRequest struct {
 	RequestID string `json:"requestId"`
 }
 
-// CancelTableRequest is the "stop that load" call. It runs against the same
+// CancelRequest is the "stop that request" call. It runs against the same
 // connection (same credentials) as the request it cancels, so it can only ever
 // terminate sessions the caller could already have terminated themselves.
 // Best-effort by nature: a cancel that arrives before the tagged statement has
-// started terminates nothing (the client retries shortly after).
-func (s *Server) CancelTableRequest(w http.ResponseWriter, r *http.Request) {
+// started terminates nothing (the client retries shortly after). Terminating a
+// session rolls back its open transaction, so a cancelled write leaves nothing
+// half-applied — but a statement that had already committed is not undone.
+func (s *Server) CancelRequest(w http.ResponseWriter, r *http.Request) {
 	var req cancelRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !validRequestID(req.RequestID) {
 		writeError(w, http.StatusBadRequest, "a valid requestId is required")

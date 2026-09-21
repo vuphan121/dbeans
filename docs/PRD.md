@@ -41,7 +41,7 @@ One person: the developer running this for their own side projects, home lab, or
 - Test-connection before saving (client-side form check for now — see the reachability status below for the real server-side check).
 - Home screen is a pannable/zoomable 2D board (not a list) — each connection is a card you can drag and resize; position/size snap to the background grid.
 - Each connection shows a live reachability indicator (green/red/gray dot) — a real TCP check against the host:port, cached ~60s, refreshed on page visits. This is *not* a credentials/auth check yet (see ARCHITECTURE.md §5).
-- **Not yet implemented:** credentials are stored as plain JSONB in the operator database, not encrypted at rest — flagged as a known gap, not a v1 claim.
+- Saved connection credentials are encrypted at rest in the operator database (AES-256-GCM, keyed by `CONNECTION_ENCRYPTION_KEY`, independent of any login password); see ARCHITECTURE.md §4–§5.
 
 ### Redis & Kafka inspection
 - **Redis:** browse keys (pattern search), view/edit values by type (string, hash, list, set, zset), edit TTL, delete/create keys.
@@ -56,7 +56,7 @@ One person: the developer running this for their own side projects, home lab, or
 ### SQL editor
 - Multi-tab editor, one tab per query/session.
 - Syntax highlighting, schema-aware autocomplete (table/column names).
-- Run selection or full statement; cancel a running query.
+- Run selection or full statement; cancel a running query. While a tab's query runs, **Run** becomes **Cancel** (Esc also cancels); cancelling terminates the query in the database, so an in-flight write is rolled back rather than left half-applied. Runs are tracked per tab, and a cancelled run shows a neutral “Query cancelled”, not an error.
 - Keyboard-first: run query, new tab, command palette, etc. all reachable without a mouse.
 
 ### Table data browser

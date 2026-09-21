@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { WorkbenchShell } from "./WorkbenchShell";
 import { SchemaTree } from "./SchemaTree";
 import { TabStrip } from "./TabStrip";
@@ -31,7 +31,11 @@ export function SqlWorkbench({
   const token = useAuthStore((s) => s.token);
   const resolvedTheme = theme === "system" ? (document.documentElement.getAttribute("data-theme") as "dark" | "light" | null) ?? "dark" : theme;
   const [view, setView] = useState<"query" | "data" | "history" | "graphs" | "erd">("query");
-  const [running, setRunning] = useState(false);
+  // In-flight runs, per tab, so each can be cancelled on its own. The ref holds
+  // the controllers; the state mirrors which tabs are running so the UI updates.
+  const runs = useRef<Record<string, AbortController>>({});
+  const [runningTabs, setRunningTabs] = useState<Record<string, boolean>>({});
+  const [cancelledTabs, setCancelledTabs] = useState<Record<string, boolean>>({});
   const [editorHeight, setEditorHeight] = useState(296);
   const [resultByTab, setResultByTab] = useState<Record<string, QueryResult>>({});
   const [errorByTab, setErrorByTab] = useState<Record<string, string>>({});
@@ -43,15 +47,21 @@ export function SqlWorkbench({
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const result = activeTab ? resultByTab[activeTab.id] : undefined;
   const error = activeTab ? errorByTab[activeTab.id] : undefined;
+  const running = !!activeTab && !!runningTabs[activeTab.id];
+  const cancelled = !!activeTab && !!cancelledTabs[activeTab.id];
 
   async function runQuery() {
     if (!activeTab?.sql?.trim() || !token) return;
     const tabId = activeTab.id;
+    if (runs.current[tabId]) return; // one run per tab at a time
     const sql = activeTab.sql;
-    setRunning(true);
+    const controller = new AbortController();
+    runs.current[tabId] = controller;
+    setRunningTabs((r) => ({ ...r, [tabId]: true }));
+    setCancelledTabs((c) => ({ ...c, [tabId]: false }));
     setErrorByTab((e) => ({ ...e, [tabId]: "" }));
     try {
-      const res = await runQueryRequest(token, connection.id, sql);
+      const res = await runQueryRequest(token, connection.id, sql, undefined, controller.signal);
       setResultByTab((r) => ({ ...r, [tabId]: res }));
       trackEvent(token, "query_run", {
         connectionId: connection.id,
@@ -60,12 +70,39 @@ export function SqlWorkbench({
         durationMs: res.durationMs,
       });
     } catch (err) {
-      const message = err instanceof ApiError ? err.message : "Failed to run query";
-      setErrorByTab((e) => ({ ...e, [tabId]: message }));
+      if (controller.signal.aborted) {
+        // A cancel is not an error, and the previous run's result no longer
+        // describes what's in the editor.
+        setCancelledTabs((c) => ({ ...c, [tabId]: true }));
+        setResultByTab((r) => {
+          const next = { ...r };
+          delete next[tabId];
+          return next;
+        });
+      } else {
+        const message = err instanceof ApiError ? err.message : "Failed to run query";
+        setErrorByTab((e) => ({ ...e, [tabId]: message }));
+      }
     } finally {
-      setRunning(false);
+      delete runs.current[tabId];
+      setRunningTabs((r) => ({ ...r, [tabId]: false }));
     }
   }
+
+  function cancelQuery() {
+    if (activeTab) runs.current[activeTab.id]?.abort();
+  }
+
+  // Esc cancels the running query. An open autocomplete popup handles (and
+  // prevents) its own Esc first, so closing it never cancels anything.
+  useEffect(() => {
+    if (!running || view !== "query") return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && !e.defaultPrevented) runs.current[activeTabId]?.abort();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [running, view, activeTabId]);
 
   return (
     <WorkbenchShell
@@ -115,8 +152,8 @@ export function SqlWorkbench({
                 <Button variant="secondary" size="sm" className="pointer-events-auto">
                   Format
                 </Button>
-                <Button variant="primary" size="sm" onClick={runQuery} className="pointer-events-auto">
-                  {running ? "Running…" : "Run"} <span className="font-mono opacity-55">{comboLabel("⏎")}</span>
+                <Button variant="primary" size="sm" onClick={running ? cancelQuery : runQuery} title={running ? "Cancel (Esc)" : undefined} className="pointer-events-auto">
+                  {running ? "Cancel" : <>Run <span className="font-mono opacity-55">{comboLabel("⏎")}</span></>}
                 </Button>
               </div>
             </div>
@@ -135,6 +172,8 @@ export function SqlWorkbench({
                   {error}
                 </div>
               </div>
+            ) : cancelled ? (
+              <div className="flex flex-1 items-center justify-center bg-bg-app text-[12px] text-text-quiet">Query cancelled</div>
             ) : (
               <ResultsGrid
                 result={result}

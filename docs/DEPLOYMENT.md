@@ -63,3 +63,20 @@ If you skip setting Root Directory to sidestep this, Git-triggered deploys fail 
 ## Backend region vs. operator database region
 
 Every query the backend runs opens a brand-new database connection (no pooling), so the network round-trip between the backend's Vercel region and wherever the operator/target Postgres actually lives dominates every request's latency — full TCP+TLS+Postgres-auth handshake, every time. Left on Vercel's default region with a database on the other side of the world, this showed up as every job/query taking ~2000ms even for a trivial query against a handful of rows. Pinning `"regions": [...]` in `backend/vercel.json` to whatever Vercel region is closest to your database (e.g. `sin1` for a Neon `ap-southeast-1` database) cut that to ~30ms in this project — check where your operator/most-queried-target database actually lives and match the region, don't leave it on Vercel's default.
+
+## Serverless behaviors that differ from local
+
+These all passed local testing and only showed up on production, so check them for any feature that touches request lifecycle, connections, or session state.
+
+- **A client disconnect never reaches the Go handler on Vercel.** Aborting a `fetch` cancels the request context and the database query locally, but on Vercel the handler keeps running (measured: a "cancelled" 5-second query stayed active in `pg_stat_activity` for its full duration). Anything that must stop work needs an explicit server call. The Data view's page loads and counts and the SQL editor's Run do this with a request id, tagged SQL, and `POST /api/connections/{id}/cancel`; see ARCHITECTURE §2.
+- **A pooled database connection (Neon's PgBouncer, transaction mode) doesn't carry session state** — `application_name`, session-level `SET` — to the server connection actually running a statement. `SET LOCAL` inside a transaction is fine. Identify running work by its statement text in `pg_stat_activity` instead. Both of this repo's production connections are pooled.
+- **Migrations run at cold start.** The backend applies its `CREATE TABLE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS` migrations on startup (`db.Migrate`), so a deploy that adds tables (`saved_queries`, `saved_views`) is live after the first request, with nothing to run by hand. They are additive and idempotent; deploy the **backend first** when a new frontend depends on new routes.
+- **An open browser tab keeps running its old JavaScript after a deploy** (e.g. a newly added tab is missing until reload). Reload before testing the new UI.
+
+## Verifying a deploy
+
+After `git push origin main` and `bash scripts/deploy-realias.sh` reports both aliases pointing at the new commit:
+
+1. **The new backend routes exist.** An unauthenticated request to a new route returns `401` (or `400` if it validates the body first) when the new build is live and `404` on the old build. For example `curl -s -o /dev/null -w "%{http_code}\n" https://<backend>/api/saved-queries`.
+2. **The new frontend is live.** Fetch `https://<frontend>/`, find the `/assets/index-*.js` it references, and grep that file for a string only the new build contains.
+3. **Exercise it in a browser after a reload**, signed in. For Data-view features follow [DATA_EDITOR_TESTING.md](DATA_EDITOR_TESTING.md) against a throwaway schema and throwaway saved views, then drop and delete what you created. Measure the *database* side too (for example `pg_stat_activity`) — the UI alone can look correct while the server keeps working.

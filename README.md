@@ -16,6 +16,13 @@ Working app: real accounts, connections, schema browsing + SQL execution, a pagi
 - [Deployment](docs/DEPLOYMENT.md) — step-by-step Vercel setup (two projects: frontend + backend)
 - [Data Editor Testing](docs/DATA_EDITOR_TESTING.md) — safe disposable fixture, automated checks, browser/API acceptance matrix, and cleanup guidance for agents
 
+## Development
+
+- **Backend:** `cd backend && go run .` (needs `backend/.env`; see `backend/.env.example`).
+- **Frontend:** `cd frontend && npm install && npm run dev`.
+- **Tests:** `go test ./...` in `backend` and `npm test` in `frontend`. The database-backed Go tests only run when `DBEANS_TEST_DATABASE_URL` points at a *disposable* database; see [Data Editor Testing](docs/DATA_EDITOR_TESTING.md).
+- **Deploying:** push to `main`, then `bash scripts/deploy-realias.sh`; see [Deployment](docs/DEPLOYMENT.md), including how to verify a deploy.
+
 ## At a glance
 
 - **Backend:** Go — runs either as a plain binary (local dev, any traditional host) or as a Vercel Go serverless function, same code either way

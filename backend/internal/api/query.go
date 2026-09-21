@@ -357,6 +357,10 @@ type runQueryRequest struct {
 	// can be tested with the real value, without ordinary workbench queries
 	// ever having "{{" treated as anything but literal text.
 	RenderTemplate bool `json:"renderTemplate,omitempty"`
+	// RequestID tags the statement so an explicit cancel (see request_cancel.go)
+	// can find and stop it while it runs. Optional; without one the query
+	// simply isn't cancellable.
+	RequestID string `json:"requestId,omitempty"`
 }
 
 // QueryResult carries every cell as either a string or null, decoded from
@@ -416,7 +420,7 @@ func (s *Server) RunConnectionQuery(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	start := time.Now()
-	rows, err := conn.Query(ctx, req.SQL, pgx.QueryResultFormats{pgx.TextFormatCode})
+	rows, err := conn.Query(ctx, tagSQL(req.RequestID, req.SQL), pgx.QueryResultFormats{pgx.TextFormatCode})
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return

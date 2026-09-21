@@ -19,7 +19,7 @@ git branch --show-current
 git status --short
 ```
 
-Expected branch for this feature: `codex/data-editor`.
+Record the branch and any uncommitted changes in your handoff.
 
 Configure `backend/.env` from `backend/.env.example`. The operator database in `DATABASE_URL` stores dbeans users and saved connections; it does not have to be the disposable target database. The target PostgreSQL connection is added through the app.
 
@@ -79,7 +79,10 @@ Acceptance criteria:
 - `npm test` passes in `frontend`.
 - TypeScript and the Vite production build complete successfully.
 - No new lint warnings originate from `DataBrowser.tsx` or other files changed for the feature. The repository may still report documented pre-existing warnings elsewhere.
+- New dialogs, menus, and confirms carry action names only, with no helper or description text (DESIGN.md principle 7); errors, validation messages, results, and counts are fine.
 - `git diff --check` reports no whitespace errors. Line-ending conversion notices on Windows are informational.
+
+Other backend tests: `table_import_test.go` (import request validation and SQL building), `saved_test.go` (saved query/view validation and statement-timeout detection), `request_cancel_test.go` (request-id validation and tagging, plus DB-backed proof that only the tagged session is terminated), and `table_data_db_test.go` (import atomicity, the row-count strategy, count timeouts). Frontend tests are in `frontend/tests/`: the CSV parser, view sanitising, and the abort/cancel retry logic.
 
 The focused backend tests in `backend/internal/api/table_data_test.go` cover filter parameterization, rejection of unknown columns, complete composite-primary-key enforcement, explicit/fallback ordering, and rejection of unsafe schema statements.
 
@@ -298,7 +301,7 @@ turing@example.test,,2026-05-09,x
 6. **Import** is disabled on views and on read-only connections; a direct `POST …/table-import` to either is refused (400 / 403).
 7. Open **History**: each *committed* import has a `CSV import` entry with the table and row count, but no row contents. Dry runs and failed imports do not appear.
 
-Expected: import is all-or-nothing; validation shows every problem in one pass (up to 20); nothing is written until the explicit confirm; undo is intentionally not offered (the confirm dialog says so).
+Expected: import is all-or-nothing; validation shows every problem in one pass (up to 20); nothing is written until the explicit confirm; undo is intentionally not offered.
 
 ### K. Remembered views, saved views, and the table picker (added 2026-09-21)
 
@@ -316,6 +319,19 @@ Expected: import is all-or-nothing; validation shows every problem in one pass (
 2. Reload the page and sign in from another browser: the queries are present. **Delete** removes it from the list and the table.
 3. Migration: an older browser may still hold queries in `localStorage["dbeans.snippets.v2"]`. Simulate it by setting that key to `{"state":{"snippets":[{"id":"snip_x","name":"legacy","sql":"select 1"}]},"version":0}` and reloading while signed in. The query appears in the sidebar and in `saved_queries`, and the localStorage key is removed. Reloading again does not duplicate it.
 
+### M. Cancelling SQL editor queries (added 2026-09-21)
+
+Run this on the deployed serverless backend as well as locally: a client disconnect only stops a query locally, so the explicit cancel call is what's under test.
+
+1. In **Query**, run `select pg_sleep(30) as cancel_probe;`. The button becomes **Cancel** (tooltip "Cancel (Esc)"). Pressing the run shortcut again does not start a second copy. From another session, `SELECT count(*) FROM pg_stat_activity WHERE state = 'active' AND query ILIKE '%cancel_probe%' AND query NOT ILIKE '%pg_stat_activity%'` returns 1.
+2. Click **Cancel**. Within about a second that count returns 0, the panel shows a neutral "Query cancelled" (no red error, no previous result, no stale status bar), and the button is **Run** again. Repeat with **Esc** instead of the button.
+3. Tabs: start the query in one tab, switch to a new tab — its button says **Run**. Switch back — still **Cancel**. Cancelling there stops only that tab's query.
+4. Write safety (disposable schema only): `create table dbeans_agent_test.cancel_probe(id int);` then run `insert into dbeans_agent_test.cancel_probe select g from generate_series(1, 60) g where pg_sleep(0.1) is not null;` and cancel after about a second. `select count(*) from dbeans_agent_test.cancel_probe` is **0**: the write was rolled back, not half-applied. (A statement that had already finished before the cancel landed is not undone.) Drop the table afterward.
+5. A query that hits the server's 20-second limit shows the timeout error, not "Query cancelled", and the button returns to **Run**.
+6. An ordinary query still runs and shows its rows, columns, and status bar, including one that begins with its own `--` comment or ends in `;`.
+
+Expected: cancelling a running query stops it in Postgres, on serverless as well as locally, and never leaves a write half-applied.
+
 ## 6. API contract checks
 
 Agents may test through the UI or call the API with a valid bearer token. Do not put tokens or connection passwords in committed files, screenshots, logs, or final reports.
@@ -330,7 +346,7 @@ Agents may test through the UI or call the API with a valid bearer token. Do not
 | `POST /api/connections/{id}/schema-change` | Guarded DDL | Accepts only one allow-listed create/add statement and enforces read-only mode. |
 | `POST /api/connections/{id}/table-data` | Page of rows | Also returns `totalKind` (`exact`/`estimated`/`lower-bound`/`unknown`/`skipped`) and an always-exact `hasMore`. `countMode: "skip"` returns `skipped` with `total: 0`. |
 | `POST /api/connections/{id}/table-data/count` | Explicit exact count | Same table and filters as a page load. Times out with HTTP 504 after 15 s. |
-| `POST /api/connections/{id}/table-data/cancel` | Stop an in-flight load or count | Body `{requestId}` matching the id the load was sent with. Terminates the active session running that tagged statement and returns `{terminated: n}`; `0` (not an error) if nothing matches, e.g. it already finished. |
+| `POST /api/connections/{id}/cancel` (alias: `…/table-data/cancel`) | Stop an in-flight page load, count, or SQL-editor query | Body `{requestId}` matching the id the load was sent with. Terminates the active session running that tagged statement and returns `{terminated: n}`; `0` (not an error) if nothing matches, e.g. it already finished. |
 | `POST /api/connections/{id}/table-import` | Bulk insert mapped rows | `dryRun: true` always rolls back. Returns HTTP 200 with `ok` and per-row `errors` for data problems, HTTP 400 for a malformed request, 403 on read-only connections. |
 | `GET/POST /api/connections/{id}/views`, `PATCH/DELETE …/views/{viewId}` | Saved Data views | Per user and connection; 409 on a duplicate name for the same table. |
 | `GET/POST /api/saved-queries`, `POST …/import`, `PATCH/DELETE …/{id}` | Saved queries | Per user. `import` is the idempotent one-time localStorage migration. |
@@ -368,7 +384,7 @@ An agent handoff should include:
 - Backend and frontend commands run.
 - Automated test/build/lint results.
 - Target type: disposable local database, dedicated test schema, or read-only inspection only.
-- Manual cases completed from sections A–L.
+- Manual cases completed from sections A–M.
 - Any skipped destructive case and why.
 - Exact failures with reproduction and relevant response text.
 - Cleanup result.

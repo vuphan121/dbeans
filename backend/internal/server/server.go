@@ -107,7 +107,10 @@ func New(ctx context.Context) (http.Handler, *pgxpool.Pool, error) {
 	r.Post("/api/connections/{id}/update-cell", s.UpdateConnectionCell)
 	r.Post("/api/connections/{id}/table-data", s.BrowseTableData)
 	r.Post("/api/connections/{id}/table-data/count", s.CountTableData)
-	r.Post("/api/connections/{id}/table-data/cancel", s.CancelTableRequest)
+	r.Post("/api/connections/{id}/cancel", s.CancelRequest)
+	// The original, Data-view-specific path. Kept so a browser tab still running
+	// the previous frontend build can cancel until it reloads.
+	r.Post("/api/connections/{id}/table-data/cancel", s.CancelRequest)
 	r.Post("/api/connections/{id}/table-import", s.ImportTableRows)
 	r.Post("/api/connections/{id}/table-rows", s.InsertTableRow)
 	r.Patch("/api/connections/{id}/table-rows", s.UpdateTableRow)

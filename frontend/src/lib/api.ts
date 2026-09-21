@@ -22,6 +22,8 @@ import type {
   Secret,
 } from "@/lib/types";
 
+import { cancelOnAbort } from "@/lib/cancelOnAbort";
+
 export const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8080";
 
 export class ApiError extends Error {
@@ -168,10 +170,22 @@ export function updateCell(token: string, id: string, input: UpdateCellInput): P
   });
 }
 
-// signal lets the caller cancel an in-flight page load (the server sees the
-// disconnect and cancels the Postgres query). countMode "skip" asks the server
-// not to count rows at all — for when only the page or sort changed and the
-// caller already holds the total for this exact table + filter set.
+// Asks the server to terminate the Postgres session running an aborted page
+// load or count (see cancelOnAbort for why aborting the fetch isn't enough).
+function cancelServerWorkOnAbort(token: string, connectionId: string, requestId: string, signal: AbortSignal | undefined, settled: Promise<unknown>) {
+  cancelOnAbort(signal, settled, () =>
+    request<{ terminated: number }>(`/api/connections/${connectionId}/table-data/cancel`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ requestId }),
+    }),
+  );
+}
+
+// signal lets the caller cancel an in-flight page load, including the database
+// query behind it (see cancelServerWorkOnAbort). countMode "skip" asks the
+// server not to count rows at all — for when only the page or sort changed and
+// the caller already holds the total for this exact table + filter set.
 export function browseTableData(
   token: string,
   id: string,
@@ -186,12 +200,15 @@ export function browseTableData(
   },
   signal?: AbortSignal,
 ): Promise<TableDataPage> {
-  return request(`/api/connections/${id}/table-data`, {
+  const requestId = crypto.randomUUID();
+  const result = request<TableDataPage>(`/api/connections/${id}/table-data`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, requestId }),
     signal,
   });
+  cancelServerWorkOnAbort(token, id, requestId, signal, result);
+  return result;
 }
 
 // The explicit exact count behind the Data view's "Count exactly" — separate
@@ -202,12 +219,15 @@ export function countTableData(
   input: { schema: string; table: string; filters: Omit<DataFilter, "id">[] },
   signal?: AbortSignal,
 ): Promise<{ total: number; totalKind: "exact" }> {
-  return request(`/api/connections/${id}/table-data/count`, {
+  const requestId = crypto.randomUUID();
+  const result = request<{ total: number; totalKind: "exact" }>(`/api/connections/${id}/table-data/count`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, requestId }),
     signal,
   });
+  cancelServerWorkOnAbort(token, id, requestId, signal, result);
+  return result;
 }
 
 export function importTableRows(

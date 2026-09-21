@@ -274,7 +274,7 @@ CREATE VIEW dbeans_agent_test.slow_events AS SELECT id, (pg_sleep(0.01) IS NOT N
 5. Filter `kind` equals `k1`: the total is exactly **4,000**. Filter `kind` does not equal `zzz` (matches everything): **50,000+**, not a multi-second wait.
 6. Next is disabled on the last page and enabled otherwise, even while the total is only an estimate. Confirm a deep page still loads (use the API with a large `page`, or many clicks of Next).
 7. Open `slow_events`. The rows load after about a second; the footer shows **? rows** (the bounded count timed out at 3 s) with **Count exactly**. Clicking it fails after about 15 s with "Counting every row took too long…" and the grid is unaffected.
-8. Cancel: with `slow_events` selected, click **Refresh** and, while it spins, click the same button (now an ✕, tooltip "Cancel loading"). The grid stops loading, an inline notice says loading was cancelled, and `SELECT count(*) FROM pg_stat_activity WHERE state = 'active' AND query ILIKE '%slow_events%'` (run in another session) returns 0 within a second.
+8. Cancel (**run this on the deployed serverless backend as well as locally** — a client disconnect only stops the query locally; on Vercel it's the explicit cancel call that does it): with `slow_events` selected, click **Refresh** and, while it spins, click the same button (now an ✕, tooltip "Cancel loading"). The grid stops loading, an inline notice says loading was cancelled, and `SELECT count(*) FROM pg_stat_activity WHERE state = 'active' AND query ILIKE '%slow_events%'` (run in another session) returns 0 within a second.
 9. Stale responses: click **Refresh** on `slow_events` and, before it finishes, pick a small table. The small table's rows and columns must be what remains; the slow response must never replace them.
 
 Expected: the page never blocks on a count it can't afford; the total is always labelled for what it is (exact, `~` estimate, `N+` lower bound, `?` unknown); superseded or cancelled requests leave nothing running in PostgreSQL.
@@ -328,6 +328,7 @@ Agents may test through the UI or call the API with a valid bearer token. Do not
 | `POST /api/connections/{id}/schema-change` | Guarded DDL | Accepts only one allow-listed create/add statement and enforces read-only mode. |
 | `POST /api/connections/{id}/table-data` | Page of rows | Also returns `totalKind` (`exact`/`estimated`/`lower-bound`/`unknown`/`skipped`) and an always-exact `hasMore`. `countMode: "skip"` returns `skipped` with `total: 0`. |
 | `POST /api/connections/{id}/table-data/count` | Explicit exact count | Same table and filters as a page load. Times out with HTTP 504 after 15 s. |
+| `POST /api/connections/{id}/table-data/cancel` | Stop an in-flight load or count | Body `{requestId}` matching the id the load was sent with. Terminates the active session running that tagged statement and returns `{terminated: n}`; `0` (not an error) if nothing matches, e.g. it already finished. |
 | `POST /api/connections/{id}/table-import` | Bulk insert mapped rows | `dryRun: true` always rolls back. Returns HTTP 200 with `ok` and per-row `errors` for data problems, HTTP 400 for a malformed request, 403 on read-only connections. |
 | `GET/POST /api/connections/{id}/views`, `PATCH/DELETE …/views/{viewId}` | Saved Data views | Per user and connection; 409 on a duplicate name for the same table. |
 | `GET/POST /api/saved-queries`, `POST …/import`, `PATCH/DELETE …/{id}` | Saved queries | Per user. `import` is the idempotent one-time localStorage migration. |
@@ -344,6 +345,7 @@ Minimum negative API cases:
 - `DROP TABLE`, a semicolon-separated second statement, or a SQL comment sent to `schema-change` → HTTP 400.
 - Import: unknown column, identity or generated column, a column mapped twice, an unmapped required column, a ragged row, no rows, more than 10,000 rows, or a view target → HTTP 400. Read-only connection → HTTP 403. Another user's connection → HTTP 404.
 - Count: unknown filter column or missing table → HTTP 400; another user's connection → HTTP 404.
+- Cancel: missing, too-short, or non-`[A-Za-z0-9-]` `requestId` → HTTP 400; another user's or unknown connection → HTTP 404; cancelling an unrelated or already-finished id terminates nothing and leaves other requests running.
 - Saved queries and views: blank name, non-object view config, or missing id → HTTP 400; duplicate id or duplicate view name → HTTP 409; another user's query, view, or connection → HTTP 404 (or no effect for DELETE).
 
 ## 7. Cleanup

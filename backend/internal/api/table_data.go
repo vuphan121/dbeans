@@ -33,6 +33,9 @@ type browseTableRequest struct {
 	// "skip" (don't count at all — the caller already has a count for this
 	// exact table + filter set, e.g. when only the page or sort changed).
 	CountMode string `json:"countMode"`
+	// RequestID tags this load's statements so an explicit cancel (see
+	// request_cancel.go) can find and stop them. Optional.
+	RequestID string `json:"requestId"`
 }
 
 type dataSort struct {
@@ -243,8 +246,8 @@ func isStatementTimeout(err error) bool {
 // statement_timeout is SET LOCAL — scoped to that transaction and gone once it
 // rolls back, never leaking onto the connection's later queries. limit <= 0
 // means an unbounded count(*); otherwise at most limit+1 matching rows are
-// ever scanned.
-func countWithTimeout(ctx context.Context, conn *pgx.Conn, qualified, where string, args []any, limit int, timeoutMs int) (int64, error) {
+// ever scanned. requestID, if valid, tags the statement so it can be cancelled.
+func countWithTimeout(ctx context.Context, conn *pgx.Conn, qualified, where string, args []any, limit int, timeoutMs int, requestID string) (int64, error) {
 	tx, err := conn.Begin(ctx)
 	if err != nil {
 		return 0, err
@@ -258,7 +261,7 @@ func countWithTimeout(ctx context.Context, conn *pgx.Conn, qualified, where stri
 		stmt = fmt.Sprintf("SELECT count(*) FROM (SELECT 1 FROM %s%s LIMIT %d) AS capped", qualified, where, limit+1)
 	}
 	var total int64
-	if err := tx.QueryRow(ctx, stmt, args...).Scan(&total); err != nil {
+	if err := tx.QueryRow(ctx, tagSQL(requestID, stmt), args...).Scan(&total); err != nil {
 		return 0, err
 	}
 	return total, nil
@@ -288,13 +291,13 @@ func estimatedRowCount(ctx context.Context, conn *pgx.Conn, schema, table string
 //   - everything else counts at most countCap rows under a short statement
 //     timeout: exact below the cap, "lower-bound" (N+) at it, "unknown" if
 //     even that bounded scan timed out (an unindexed filter on a huge table).
-func autoRowCount(ctx context.Context, conn *pgx.Conn, schema, table, tableType string, unfiltered bool, qualified, where string, args []any) (rowCount, error) {
+func autoRowCount(ctx context.Context, conn *pgx.Conn, schema, table, tableType string, unfiltered bool, qualified, where string, args []any, requestID string) (rowCount, error) {
 	if unfiltered && tableType == "BASE TABLE" {
 		if estimate, ok := estimatedRowCount(ctx, conn, schema, table); ok && estimate >= countCap {
 			return rowCount{Total: estimate, Kind: countEstimated}, nil
 		}
 	}
-	n, err := countWithTimeout(ctx, conn, qualified, where, args, countCap, boundedCountTimeoutMs)
+	n, err := countWithTimeout(ctx, conn, qualified, where, args, countCap, boundedCountTimeoutMs, requestID)
 	if err != nil {
 		if isStatementTimeout(err) {
 			return rowCount{Kind: countUnknown}, nil
@@ -419,7 +422,7 @@ func (s *Server) BrowseTableData(w http.ResponseWriter, r *http.Request) {
 		qualified := pgx.Identifier{req.Schema, req.Table}.Sanitize()
 		count := rowCount{Kind: countSkipped}
 		if req.CountMode != "skip" {
-			count, err = autoRowCount(ctx, conn, req.Schema, req.Table, tableType, len(req.Filters) == 0, qualified, where, args)
+			count, err = autoRowCount(ctx, conn, req.Schema, req.Table, tableType, len(req.Filters) == 0, qualified, where, args, req.RequestID)
 			if err != nil {
 				writeError(w, http.StatusBadGateway, err.Error())
 				return
@@ -440,7 +443,7 @@ func (s *Server) BrowseTableData(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		query := fmt.Sprintf("SELECT * FROM %s%s%s LIMIT $%d OFFSET $%d", qualified, where, order, len(args)+1, len(args)+2)
-		rows, err := conn.Query(ctx, query, queryArgs...)
+		rows, err := conn.Query(ctx, tagSQL(req.RequestID, query), queryArgs...)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
@@ -471,9 +474,10 @@ func (s *Server) BrowseTableData(w http.ResponseWriter, r *http.Request) {
 }
 
 type countTableRequest struct {
-	Schema  string       `json:"schema"`
-	Table   string       `json:"table"`
-	Filters []dataFilter `json:"filters"`
+	Schema    string       `json:"schema"`
+	Table     string       `json:"table"`
+	Filters   []dataFilter `json:"filters"`
+	RequestID string       `json:"requestId"`
 }
 
 // CountTableData is the explicit "count exactly" the Data view offers when the
@@ -498,7 +502,7 @@ func (s *Server) CountTableData(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		total, err := countWithTimeout(ctx, conn, pgx.Identifier{req.Schema, req.Table}.Sanitize(), where, args, 0, exactCountTimeoutMs)
+		total, err := countWithTimeout(ctx, conn, pgx.Identifier{req.Schema, req.Table}.Sanitize(), where, args, 0, exactCountTimeoutMs, req.RequestID)
 		if err != nil {
 			if isStatementTimeout(err) {
 				writeError(w, http.StatusGatewayTimeout, "Counting every row took too long. Add a filter to narrow it down.")

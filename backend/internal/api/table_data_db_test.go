@@ -17,11 +17,13 @@ import (
 //
 //	DBEANS_TEST_DATABASE_URL=postgres://postgres@127.0.0.1:5432/scratch go test ./internal/api
 
+func testDatabaseURL() string { return os.Getenv("DBEANS_TEST_DATABASE_URL") }
+
 // testSchema connects to the test database and creates an empty schema for one
 // test, returning the connection and the schema's name.
 func testSchema(t *testing.T) (context.Context, *pgx.Conn, string) {
 	t.Helper()
-	url := os.Getenv("DBEANS_TEST_DATABASE_URL")
+	url := testDatabaseURL()
 	if url == "" {
 		t.Skip("DBEANS_TEST_DATABASE_URL is not set")
 	}
@@ -166,7 +168,7 @@ func TestAutoRowCount(t *testing.T) {
 	small := pgx.Identifier{schema, "small"}.Sanitize()
 	count := func(table, name, where string, args ...any) rowCount {
 		t.Helper()
-		got, err := autoRowCount(ctx, conn, schema, name, "BASE TABLE", where == "", table, where, args)
+		got, err := autoRowCount(ctx, conn, schema, name, "BASE TABLE", where == "", table, where, args, "")
 		if err != nil {
 			t.Fatalf("autoRowCount: %v", err)
 		}
@@ -201,7 +203,7 @@ func TestCountWithTimeoutIsScopedToItsTransaction(t *testing.T) {
 	mustExec(t, ctx, conn, fmt.Sprintf(`CREATE VIEW %s.slow AS SELECT g AS id FROM generate_series(1, 1000) g WHERE pg_sleep(0.01) IS NOT NULL`, schema))
 	slow := pgx.Identifier{schema, "slow"}.Sanitize()
 
-	_, err := countWithTimeout(ctx, conn, slow, "", nil, 0, 200)
+	_, err := countWithTimeout(ctx, conn, slow, "", nil, 0, 200, "")
 	if !isStatementTimeout(err) {
 		t.Fatalf("expected a statement timeout, got %v", err)
 	}
@@ -215,7 +217,7 @@ func TestCountWithTimeoutIsScopedToItsTransaction(t *testing.T) {
 		t.Fatalf("statement_timeout leaked onto the connection: %q", timeout)
 	}
 	// And a bounded count over the same view stops at its cap rather than scanning it all.
-	if n, err := countWithTimeout(ctx, conn, slow, "", nil, 5, 5000); err != nil || n != 6 {
+	if n, err := countWithTimeout(ctx, conn, slow, "", nil, 5, 5000, ""); err != nil || n != 6 {
 		t.Fatalf("expected the bounded count to stop at limit+1 rows, got %d, %v", n, err)
 	}
 }

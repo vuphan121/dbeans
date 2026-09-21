@@ -8,6 +8,8 @@ interface SavedViewsState {
   loadViews: (connectionId: string) => Promise<void>;
   /** Throws an ApiError (e.g. 409 for a duplicate name) for the caller to show. */
   createView: (connectionId: string, schema: string, table: string, name: string, config: DataViewConfig) => Promise<SavedView>;
+  /** Throws an ApiError (e.g. 409 for a name already used on that table) for the caller to show. */
+  renameView: (connectionId: string, viewId: string, name: string) => Promise<void>;
   removeView: (connectionId: string, viewId: string) => Promise<void>;
 }
 
@@ -35,6 +37,13 @@ export const useSavedViewsStore = create<SavedViewsState>()((set) => ({
     const view = await api.createSavedView(token, connectionId, { id, schema, table, name, config });
     set((s) => ({ byConnectionId: { ...s.byConnectionId, [connectionId]: [...(s.byConnectionId[connectionId] ?? []), view] } }));
     return view;
+  },
+
+  renameView: async (connectionId, viewId, name) => {
+    const token = useAuthStore.getState().token;
+    if (!token) throw new Error("Not signed in.");
+    await api.updateSavedView(token, connectionId, viewId, { name });
+    set((s) => ({ byConnectionId: { ...s.byConnectionId, [connectionId]: (s.byConnectionId[connectionId] ?? []).map((v) => (v.id === viewId ? { ...v, name } : v)) } }));
   },
 
   removeView: async (connectionId, viewId) => {

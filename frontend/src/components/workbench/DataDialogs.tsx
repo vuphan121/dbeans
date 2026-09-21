@@ -14,6 +14,7 @@ function focusMarkedField(event: Event) {
   if (!field) return;
   event.preventDefault();
   field.focus();
+  if (field instanceof HTMLInputElement) field.select();
 }
 
 export function Modal({ title, onClose, locked = false, width = 760, children }: { title: string; onClose: () => void; locked?: boolean; width?: number; children: ReactNode }) {

@@ -34,14 +34,14 @@ export function Modal({ title, onClose, locked = false, width = 760, children }:
   );
 }
 
-export function Confirm({ title, body, confirm, tone = "danger", loading, onCancel, onConfirm }: { title: string; body: string; confirm: string; tone?: "danger" | "primary"; loading: boolean; onCancel: () => void; onConfirm: () => void }) {
+export function Confirm({ title, body, confirm, tone = "danger", loading, onCancel, onConfirm }: { title: string; body?: string; confirm: string; tone?: "danger" | "primary"; loading: boolean; onCancel: () => void; onConfirm: () => void }) {
   return (
     <Dialog.Root open onOpenChange={(open) => !open && !loading && onCancel()}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60" />
         <Dialog.Content className="fixed left-1/2 top-1/2 z-[70] w-[420px] max-w-[92vw] -translate-x-1/2 -translate-y-1/2 rounded-[10px] border border-border-elevated bg-bg-raised p-5 shadow-2xl">
           <Dialog.Title className="text-[14px] font-semibold text-text-primary">{title}</Dialog.Title>
-          <p className="mt-2 text-[12px] leading-5 text-text-muted">{body}</p>
+          {body && <p className="mt-2 text-[12px] leading-5 text-text-muted">{body}</p>}
           <div className="mt-5 flex justify-end gap-2">
             <Button variant="ghost" onClick={onCancel} disabled={loading}>Cancel</Button>
             <Button variant={tone} onClick={onConfirm} disabled={loading}>{loading ? "Working…" : confirm}</Button>

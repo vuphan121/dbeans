@@ -10,6 +10,8 @@ interface SavedViewsState {
   createView: (connectionId: string, schema: string, table: string, name: string, config: DataViewConfig) => Promise<SavedView>;
   /** Throws an ApiError (e.g. 409 for a name already used on that table) for the caller to show. */
   renameView: (connectionId: string, viewId: string, name: string) => Promise<void>;
+  /** Replaces a saved view's filters/sort/columns with the given config. Throws an ApiError for the caller to show. */
+  updateViewConfig: (connectionId: string, viewId: string, config: DataViewConfig) => Promise<void>;
   removeView: (connectionId: string, viewId: string) => Promise<void>;
 }
 
@@ -44,6 +46,14 @@ export const useSavedViewsStore = create<SavedViewsState>()((set) => ({
     if (!token) throw new Error("Not signed in.");
     await api.updateSavedView(token, connectionId, viewId, { name });
     set((s) => ({ byConnectionId: { ...s.byConnectionId, [connectionId]: (s.byConnectionId[connectionId] ?? []).map((v) => (v.id === viewId ? { ...v, name } : v)) } }));
+  },
+
+  updateViewConfig: async (connectionId, viewId, config) => {
+    const token = useAuthStore.getState().token;
+    if (!token) throw new Error("Not signed in.");
+    await api.updateSavedView(token, connectionId, viewId, { config });
+    const updatedAt = new Date().toISOString();
+    set((s) => ({ byConnectionId: { ...s.byConnectionId, [connectionId]: (s.byConnectionId[connectionId] ?? []).map((v) => (v.id === viewId ? { ...v, config, updatedAt } : v)) } }));
   },
 
   removeView: async (connectionId, viewId) => {

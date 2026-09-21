@@ -1,21 +1,22 @@
 import { useRef, useState } from "react";
-import { Bookmark, BookmarkPlus, Pencil, Trash2 } from "lucide-react";
+import { Bookmark, BookmarkPlus, Pencil, Save, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/DropdownMenu";
 import { Input } from "@/components/ui/Input";
 import { errorMessage } from "@/lib/api";
-import { describeView } from "@/lib/dataView";
+import { comboLabel, isModPressed } from "@/lib/platform";
 import type { SavedView } from "@/lib/types";
-import { Actions, Field, Modal } from "./DataDialogs";
+import { Actions, Confirm, Field, Modal } from "./DataDialogs";
 
 // Named presets for the table being browsed: pick one to apply its filters,
-// sort, page size and column layout, rename or delete it, or save what's on
-// screen as a new one.
+// sort, page size and column layout, rename it, overwrite it with what's on
+// screen, delete it, or save what's on screen as a new one.
 export function ViewsMenu({
   views,
   onApply,
   onSave,
   onRename,
+  onOverwrite,
   onDelete,
 }: {
   views: SavedView[];
@@ -24,11 +25,16 @@ export function ViewsMenu({
   onSave: (name: string) => Promise<void>;
   /** Same contract as onSave; only called when the name actually changed. */
   onRename: (view: SavedView, name: string) => Promise<void>;
+  /** Replaces the view's contents with what's currently applied. Rejects with an ApiError the confirm dialog shows. */
+  onOverwrite: (view: SavedView) => Promise<void>;
   onDelete: (view: SavedView) => Promise<void>;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [renaming, setRenaming] = useState<SavedView | null>(null);
+  const [overwriting, setOverwriting] = useState<SavedView | null>(null);
+  const [overwriteBusy, setOverwriteBusy] = useState(false);
+  const [overwriteError, setOverwriteError] = useState("");
   // Set when a menu action opens a dialog, so closing the menu doesn't return
   // focus to the Views button and pull it out of the dialog.
   const openingDialog = useRef(false);
@@ -39,6 +45,27 @@ export function ViewsMenu({
     setRenaming(view);
   }
 
+  function startOverwrite(view: SavedView) {
+    openingDialog.current = true;
+    setMenuOpen(false);
+    setOverwriteError("");
+    setOverwriting(view);
+  }
+
+  async function confirmOverwrite() {
+    if (!overwriting) return;
+    setOverwriteBusy(true);
+    setOverwriteError("");
+    try {
+      await onOverwrite(overwriting);
+      setOverwriting(null);
+    } catch (err) {
+      setOverwriteError(errorMessage(err, "Could not update the view."));
+    } finally {
+      setOverwriteBusy(false);
+    }
+  }
+
   return (
     <>
       <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
@@ -47,20 +74,21 @@ export function ViewsMenu({
         </DropdownMenuTrigger>
         <DropdownMenuContent onCloseAutoFocus={(event) => { if (openingDialog.current) { event.preventDefault(); openingDialog.current = false; } }}>
           <div className="max-h-[280px] min-w-[260px] overflow-y-auto">
-            {views.length === 0 && <div className="px-2.5 py-2 text-[11.5px] text-text-faint">No saved views for this table yet.</div>}
+            {views.length === 0 && <div className="px-2.5 py-2 text-[11.5px] text-text-faint">No saved views</div>}
             {views.map((view) => (
               <DropdownMenuItem
                 key={view.id}
                 onSelect={() => onApply(view)}
                 // The row buttons below aren't reachable with the arrow keys, so
-                // F2 on the highlighted row is the keyboard route to rename.
-                onKeyDown={(event) => { if (event.key === "F2") { event.preventDefault(); startRename(view); } }}
+                // F2 / Ctrl+S on the highlighted row are the keyboard routes to
+                // rename / overwrite (Ctrl+S is also stopped from saving the page).
+                onKeyDown={(event) => {
+                  if (event.key === "F2") { event.preventDefault(); startRename(view); }
+                  else if (isModPressed(event) && event.key.toLowerCase() === "s") { event.preventDefault(); startOverwrite(view); }
+                }}
                 className="group flex items-center gap-2"
               >
-                <div className="min-w-0 flex-1">
-                  <div className="truncate">{view.name}</div>
-                  <div className="truncate text-[10.5px] text-text-ghost">{describeView(view.config)}</div>
-                </div>
+                <div className="min-w-0 flex-1 truncate">{view.name}</div>
                 <button
                   type="button"
                   aria-label={`Rename view ${view.name}`}
@@ -72,6 +100,18 @@ export function ViewsMenu({
                   className="shrink-0 rounded p-1 text-text-ghost opacity-0 hover:bg-bg-active hover:text-text-primary group-data-[highlighted]:opacity-100"
                 >
                   <Pencil size={11} />
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Overwrite view ${view.name}`}
+                  title={`Overwrite (${comboLabel("S")})`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    startOverwrite(view);
+                  }}
+                  className="shrink-0 rounded p-1 text-text-ghost opacity-0 hover:bg-bg-active hover:text-text-primary group-data-[highlighted]:opacity-100"
+                >
+                  <Save size={11} />
                 </button>
                 <button
                   type="button"
@@ -95,13 +135,22 @@ export function ViewsMenu({
       {saving && (
         <NameDialog
           title="Save view"
-          hint="Saves the applied filters, sort, rows per page, and column layout for this table."
-          placeholder="e.g. Failed payments this week"
           submitLabel="Save view"
           busyLabel="Saving…"
           failure="Could not save the view."
           onClose={() => setSaving(false)}
           onSubmit={onSave}
+        />
+      )}
+      {overwriting && (
+        <Confirm
+          title={`Overwrite “${overwriting.name}”?`}
+          body={overwriteError || undefined}
+          confirm="Overwrite"
+          tone="primary"
+          loading={overwriteBusy}
+          onCancel={() => setOverwriting(null)}
+          onConfirm={() => void confirmOverwrite()}
         />
       )}
       {renaming && (
@@ -124,8 +173,6 @@ export function ViewsMenu({
 function NameDialog({
   title,
   initial = "",
-  hint,
-  placeholder,
   submitLabel,
   busyLabel,
   failure,
@@ -134,8 +181,6 @@ function NameDialog({
 }: {
   title: string;
   initial?: string;
-  hint?: string;
-  placeholder?: string;
   submitLabel: string;
   busyLabel: string;
   failure: string;
@@ -164,9 +209,8 @@ function NameDialog({
     <Modal title={title} onClose={onClose} locked={busy} width={420}>
       <div className="space-y-3 p-5">
         <Field label="Name">
-          <Input data-autofocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void submit()} placeholder={placeholder} maxLength={100} className="w-full" mono={false} />
+          <Input data-autofocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void submit()} maxLength={100} className="w-full" mono={false} />
         </Field>
-        {hint && <p className="text-[11px] leading-4 text-text-faint">{hint}</p>}
         {error && <div className="text-[11.5px] text-error-text">{error}</div>}
       </div>
       <Actions>

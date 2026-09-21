@@ -36,12 +36,3 @@ export function sanitizeViewConfig(input: Partial<DataViewConfig> | null | undef
   const hiddenColumns = hidden.length >= names.size ? [] : hidden;
   return { filters, sorts, pageSize, columnOrder, hiddenColumns };
 }
-
-// A short human description of what a view changes, for the Views menu.
-export function describeView(config: DataViewConfig): string {
-  const parts: string[] = [];
-  if (config.filters.length) parts.push(`${config.filters.length} filter${config.filters.length === 1 ? "" : "s"}`);
-  if (config.sorts.length) parts.push(`sorted by ${config.sorts[0].column} ${config.sorts[0].direction}`);
-  if (config.hiddenColumns.length) parts.push(`${config.hiddenColumns.length} hidden`);
-  return parts.join(" · ") || "no changes";
-}

@@ -62,8 +62,7 @@ export function HistoryPanel({ connection, onOpenSql }: { connection: SavedConne
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-bg-app">
-      <div className="flex h-12 shrink-0 items-center justify-between border-b border-border-default bg-bg-surface px-3.5">
-        <span className="text-[12px] text-text-faint">Query runs and Data-editor changes for this connection.</span>
+      <div className="flex h-12 shrink-0 items-center justify-end border-b border-border-default bg-bg-surface px-3.5">
         <Button size="sm" variant="secondary" onClick={() => void load()} disabled={loading}>
           <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
         </Button>

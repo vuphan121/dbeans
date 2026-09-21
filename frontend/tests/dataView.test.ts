@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { describeView, EMPTY_VIEW, sanitizeViewConfig } from "../src/lib/dataView.ts";
+import { EMPTY_VIEW, sanitizeViewConfig } from "../src/lib/dataView.ts";
 import { relativeTime } from "../src/lib/time.ts";
 
 const columns = [{ name: "id", type: "int" }, { name: "email", type: "text" }, { name: "plan", type: "text" }];
@@ -38,14 +38,6 @@ test("sanitizeViewConfig enforces supported page sizes, unique columns, and neve
   assert.equal(sanitizeViewConfig({ pageSize: 7 }, columns).pageSize, 100);
   assert.deepEqual(sanitizeViewConfig({ hiddenColumns: ["id", "email", "plan"] }, columns).hiddenColumns, []);
   assert.deepEqual(sanitizeViewConfig({ columnOrder: ["id", "id", "email"] }, columns).columnOrder, ["id", "email", "plan"]);
-});
-
-test("describeView summarises what a view changes", () => {
-  assert.equal(describeView(EMPTY_VIEW), "no changes");
-  assert.equal(
-    describeView({ ...EMPTY_VIEW, filters: [{ column: "id", operator: "eq", value: "1" }], sorts: [{ column: "id", direction: "desc" }] }),
-    "1 filter · sorted by id desc",
-  );
 });
 
 test("relativeTime buckets ages and never goes negative under clock skew", () => {

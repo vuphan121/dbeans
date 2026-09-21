@@ -12,6 +12,7 @@ Reference points for the feeling we want: **Linear**, **TablePlus**, **Raycast**
 4. **Content over chrome.** Sidebars and panels are collapsible and resizable; the SQL editor and results grid get the space by default. No decorative UI competing with the user's data.
 5. **Dark mode is not an afterthought.** Designed dark-first (this is a developer tool used at all hours), with an equally polished light theme — both built from the same token system, not a mechanical inversion.
 6. **Honest, inline feedback.** Errors surface next to what caused them (e.g., a SQL error appears near the query, not just as a toast). Row counts, elapsed time, and affected-rows are always visible after a query runs.
+7. **Action names, not explanations.** Label things with the action (verb) and stop there. No helper paragraphs under dialog titles, no grey sub-lines under menu rows, no placeholder examples, no "what this will do" body text in confirms — if the action name isn't enough, rename the action. What stays is *feedback*, not description: errors and validation problems (inline, next to what caused them), results ("Imported 3 rows"), counts and status, and short empty states ("No saved views"). Tooltips may carry a shortcut ("Rename (F2)"). A destructive or irreversible action is guarded by a confirm whose title names the action and object ("Overwrite “Failed payments”?"), with Cancel focused by default — not by a paragraph of warning. Apply this to every new feature.
 
 ## 2. Layout
 

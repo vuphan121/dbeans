@@ -174,8 +174,6 @@ export function ImportDialog({
           {parsed && <span className="min-w-0 truncate text-[12px] text-text-muted">{fileName} · {dataRows.length.toLocaleString()} rows · delimiter {delimiter === "\t" ? "tab" : `"${delimiter}"`}</span>}
         </div>
 
-        {!parsed && !error && <p className="text-[12px] leading-5 text-text-faint">Choose a comma-, semicolon-, tab-, or pipe-separated file (up to {MAX_ROWS.toLocaleString()} rows). You'll map its columns to this table and check every row before anything is written. Rows are inserted in one transaction: if any row fails, none are.</p>}
-
         {parsed && (
           <>
             <div className="flex flex-wrap gap-x-6 gap-y-2">
@@ -193,14 +191,13 @@ export function ImportDialog({
                     <Select
                       value={mapping[index] ?? SKIP}
                       onChange={(value) => { setMapping((current) => current.map((m, i) => (i === index ? value : m))); resetOutcome(); }}
-                      options={[{ value: SKIP, label: "Skip this column" }, ...targets.map((c) => ({ value: c.name, label: `${c.name}${isRequired(c) ? " *" : ""}` }))]}
+                      options={[{ value: SKIP, label: "Skip this column" }, ...targets.map((c) => ({ value: c.name, label: c.name }))]}
                       className="h-7 w-full font-mono"
                     />
                   </div>
                 ))}
               </div>
             </div>
-            <p className="text-[11px] text-text-faint">* required — NOT NULL with no default. Generated and identity columns are filled by the database and can't be imported into.</p>
 
             {preview.length > 0 && previewColumns.length > 0 && (
               <div>
@@ -240,7 +237,6 @@ export function ImportDialog({
       {confirming && (
         <Confirm
           title={`Import ${dataRows.length.toLocaleString()} rows?`}
-          body={`This inserts the rows into ${schema}.${table} in one transaction. If any row fails, none are written. It can't be undone from here.`}
           confirm="Import"
           tone="primary"
           loading={busy}

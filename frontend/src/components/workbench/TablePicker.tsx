@@ -133,7 +133,7 @@ export function TablePicker({
               )}
               <Command.Group heading={searching ? "Results" : "All tables"} className={GROUP_HEADING}>{listed.map((t) => row(t, "all"))}</Command.Group>
               {!searching && tables.length > UNSEARCHED_LIMIT && (
-                <div className="px-3 py-2 text-[11px] text-text-faint">Showing {UNSEARCHED_LIMIT} of {tables.length} — type to search the rest.</div>
+                <div className="px-3 py-2 text-[11px] text-text-faint">Showing {UNSEARCHED_LIMIT} of {tables.length}</div>
               )}
             </Command.List>
           </Command>

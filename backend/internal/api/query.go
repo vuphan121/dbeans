@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 
 	"dbeans/backend/internal/auth"
@@ -189,29 +188,12 @@ type SchemaResponse struct {
 // and columns via information_schema. Replaces the previous hardcoded mock
 // schema tree entirely — an empty database now correctly shows no tables.
 func (s *Server) GetConnectionSchema(w http.ResponseWriter, r *http.Request) {
-	user, err := auth.Resolve(r.Context(), s.Pool, bearerToken(r))
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
-		return
-	}
+	s.withTableConnection(w, r, false, func(ctx context.Context, conn *pgx.Conn, fields sqlConnFields) {
+		s.getConnectionSchema(w, ctx, conn, fields)
+	})
+}
 
-	id := chi.URLParam(r, "id")
-	engine, fields, err := s.loadTargetConnection(r.Context(), user.ID, id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "connection not found")
-		return
-	}
-
-	conn, err := s.connectTarget(r.Context(), engine, fields)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	defer conn.Close(r.Context())
-
-	ctx, cancel := context.WithTimeout(r.Context(), queryTimeout)
-	defer cancel()
-
+func (s *Server) getConnectionSchema(w http.ResponseWriter, ctx context.Context, conn *pgx.Conn, fields sqlConnFields) {
 	order := []tableKey{}
 	kinds := map[tableKey]string{}
 
@@ -402,23 +384,12 @@ func (s *Server) RunConnectionQuery(w http.ResponseWriter, r *http.Request) {
 		req.SQL = renderJobTemplate(req.SQL, time.Now(), secrets)
 	}
 
-	id := chi.URLParam(r, "id")
-	engine, fields, err := s.loadTargetConnection(r.Context(), user.ID, id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "connection not found")
-		return
-	}
+	s.withTableConnection(w, r, false, func(ctx context.Context, conn *pgx.Conn, _ sqlConnFields) {
+		s.runConnectionQuery(w, ctx, conn, req)
+	})
+}
 
-	conn, err := s.connectTarget(r.Context(), engine, fields)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	defer conn.Close(r.Context())
-
-	ctx, cancel := context.WithTimeout(r.Context(), queryTimeout)
-	defer cancel()
-
+func (s *Server) runConnectionQuery(w http.ResponseWriter, ctx context.Context, conn *pgx.Conn, req runQueryRequest) {
 	start := time.Now()
 	rows, err := conn.Query(ctx, tagSQL(req.RequestID, req.SQL), pgx.QueryResultFormats{pgx.TextFormatCode})
 	if err != nil {
@@ -535,12 +506,6 @@ type updateCellRequest struct {
 // column provenance, not free-typed user input, but are still passed through
 // pgx.Identifier.Sanitize() rather than trusted as pre-quoted.
 func (s *Server) UpdateConnectionCell(w http.ResponseWriter, r *http.Request) {
-	user, err := auth.Resolve(r.Context(), s.Pool, bearerToken(r))
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "not authenticated")
-		return
-	}
-
 	var req updateCellRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
 		req.Schema == "" || req.Table == "" || req.Column == "" || req.PKColumn == "" {
@@ -548,36 +513,17 @@ func (s *Server) UpdateConnectionCell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	id := chi.URLParam(r, "id")
-	engine, fields, err := s.loadTargetConnection(r.Context(), user.ID, id)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "connection not found")
-		return
-	}
-	if fields.ReadOnly {
-		writeError(w, http.StatusForbidden, "this connection is read-only")
-		return
-	}
+	s.withTableConnection(w, r, true, func(ctx context.Context, conn *pgx.Conn, _ sqlConnFields) {
+		stmt := fmt.Sprintf(`UPDATE %s SET %s = $1 WHERE %s = $2`,
+			pgx.Identifier{req.Schema, req.Table}.Sanitize(),
+			pgx.Identifier{req.Column}.Sanitize(),
+			pgx.Identifier{req.PKColumn}.Sanitize())
 
-	conn, err := s.connectTarget(r.Context(), engine, fields)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	defer conn.Close(r.Context())
-
-	ctx, cancel := context.WithTimeout(r.Context(), queryTimeout)
-	defer cancel()
-
-	stmt := fmt.Sprintf(`UPDATE %s SET %s = $1 WHERE %s = $2`,
-		pgx.Identifier{req.Schema, req.Table}.Sanitize(),
-		pgx.Identifier{req.Column}.Sanitize(),
-		pgx.Identifier{req.PKColumn}.Sanitize())
-
-	tag, err := conn.Exec(ctx, stmt, req.Value, req.PKValue)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "rowsAffected": tag.RowsAffected()})
+		tag, err := conn.Exec(ctx, stmt, req.Value, req.PKValue)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "rowsAffected": tag.RowsAffected()})
+	})
 }

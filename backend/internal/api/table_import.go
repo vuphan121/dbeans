@@ -205,11 +205,23 @@ func runImport(ctx context.Context, conn *pgx.Conn, stmt string, rows [][]*strin
 		}
 		probe, err := conn.Begin(ctx)
 		if err != nil {
+			// Couldn't keep probing (e.g. context deadline, connection
+			// loss) — the errors collected so far are a sample, not
+			// necessarily all of them.
+			resp.MoreErrors = true
 			return resp, nil
 		}
 		at, next := insertRowsBatch(ctx, probe, stmt, remaining)
 		_ = probe.Rollback(ctx)
-		if next == nil || at < 0 {
+		if next == nil {
+			// Every remaining row inserted cleanly on its own — the ones
+			// already recorded in resp.Errors are the complete list.
+			return resp, nil
+		}
+		if at < 0 {
+			// The probe batch itself failed rather than one identifiable
+			// row (connection loss, ...) — same as above, this is a sample.
+			resp.MoreErrors = true
 			return resp, nil
 		}
 		failed[origin[at]] = true

@@ -27,6 +27,7 @@ export function ViewsMenu({
   onRename: (view: SavedView, name: string) => Promise<void>;
   /** Replaces the view's contents with what's currently applied. Rejects with an ApiError the confirm dialog shows. */
   onOverwrite: (view: SavedView) => Promise<void>;
+  /** Called only after the confirm dialog. Callers handle/display their own failures (e.g. via a page-level error banner) rather than rejecting for the dialog to show. */
   onDelete: (view: SavedView) => Promise<void>;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -35,6 +36,9 @@ export function ViewsMenu({
   const [overwriting, setOverwriting] = useState<SavedView | null>(null);
   const [overwriteBusy, setOverwriteBusy] = useState(false);
   const [overwriteError, setOverwriteError] = useState("");
+  const [deleting, setDeleting] = useState<SavedView | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   // Set when a menu action opens a dialog, so closing the menu doesn't return
   // focus to the Views button and pull it out of the dialog.
   const openingDialog = useRef(false);
@@ -63,6 +67,27 @@ export function ViewsMenu({
       setOverwriteError(errorMessage(err, "Could not update the view."));
     } finally {
       setOverwriteBusy(false);
+    }
+  }
+
+  function startDelete(view: SavedView) {
+    openingDialog.current = true;
+    setMenuOpen(false);
+    setDeleteError("");
+    setDeleting(view);
+  }
+
+  async function confirmDelete() {
+    if (!deleting) return;
+    setDeleteBusy(true);
+    setDeleteError("");
+    try {
+      await onDelete(deleting);
+      setDeleting(null);
+    } catch (err) {
+      setDeleteError(errorMessage(err, "Could not delete the view."));
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
@@ -119,7 +144,7 @@ export function ViewsMenu({
                   title="Delete"
                   onClick={(e) => {
                     e.stopPropagation();
-                    void onDelete(view);
+                    startDelete(view);
                   }}
                   className="shrink-0 rounded p-1 text-text-ghost opacity-0 hover:bg-error-bg hover:text-error-text group-data-[highlighted]:opacity-100"
                 >
@@ -151,6 +176,16 @@ export function ViewsMenu({
           loading={overwriteBusy}
           onCancel={() => setOverwriting(null)}
           onConfirm={() => void confirmOverwrite()}
+        />
+      )}
+      {deleting && (
+        <Confirm
+          title={`Delete “${deleting.name}”?`}
+          body={deleteError || undefined}
+          confirm="Delete"
+          loading={deleteBusy}
+          onCancel={() => setDeleting(null)}
+          onConfirm={() => void confirmDelete()}
         />
       )}
       {renaming && (

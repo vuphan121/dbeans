@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { CardLayout, ConnectionFields, SavedConnection } from "@/lib/types";
 import { useAuthStore } from "@/state/auth";
+import { useToastStore } from "@/state/toast";
 import { FIELD_CENTER, GRID_UNIT, snapToGrid } from "@/lib/canvasBounds";
 import * as api from "@/lib/api";
 
@@ -70,7 +71,11 @@ export const useConnectionsStore = create<ConnectionsState>()((set, get) => ({
 
   addConnection: (name, fields, dsn) => {
     const conn: SavedConnection = {
-      id: `conn_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+      // crypto.randomUUID() rather than a timestamp + a few random chars —
+      // this id is a global primary key server-side (not scoped per user),
+      // so it needs to be collision-proof across every user's browser, not
+      // just readable.
+      id: `conn_${crypto.randomUUID()}`,
       name,
       engine: fields.engine,
       dsn,
@@ -80,7 +85,11 @@ export const useConnectionsStore = create<ConnectionsState>()((set, get) => ({
     };
     set((s) => ({ connections: [...s.connections, conn] }));
     const token = useAuthStore.getState().token;
-    if (token) api.createConnection(token, conn).catch(() => {});
+    if (token) {
+      api.createConnection(token, conn).catch(() => {
+        useToastStore.getState().show("Failed to save the connection.");
+      });
+    }
     return conn;
   },
 

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -49,15 +50,14 @@ func (s *Server) ListConnections(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to read connections")
 			return
 		}
-		dsn, err := crypto.Decrypt(dsnEnc)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to decrypt connection")
-			return
-		}
-		fields, err := crypto.Decrypt(fieldsEnc)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to decrypt connection")
-			return
+		dsn, dsnErr := crypto.Decrypt(dsnEnc)
+		fields, fieldsErr := crypto.Decrypt(fieldsEnc)
+		if dsnErr != nil || fieldsErr != nil {
+			// Don't let one row with an undecryptable secret (e.g. mid
+			// CONNECTION_ENCRYPTION_KEY rotation) take down the whole list —
+			// skip it; the rest of the user's connections still load.
+			log.Printf("connection %s: failed to decrypt, skipping: dsn=%v fields=%v", c.ID, dsnErr, fieldsErr)
+			continue
 		}
 		c.DSN = string(dsn)
 		c.Fields = fields
@@ -93,7 +93,7 @@ func (s *Server) CreateConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = s.Pool.Exec(r.Context(), `
+	tag, err := s.Pool.Exec(r.Context(), `
 		INSERT INTO connections (id, user_id, name, engine, dsn_enc, fields_enc, layout, last_used)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (id) DO UPDATE SET
@@ -107,6 +107,14 @@ func (s *Server) CreateConnection(w http.ResponseWriter, r *http.Request) {
 		c.ID, user.ID, c.Name, c.Engine, dsnEnc, fieldsEnc, c.Layout, c.LastUsed)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save connection")
+		return
+	}
+	if tag.RowsAffected() == 0 {
+		// id is a global primary key (not scoped per user), so the only way
+		// the WHERE clause above filters out both the insert and the update
+		// is that id already belongs to a different user — a client-side id
+		// collision, not this user retrying their own request.
+		writeError(w, http.StatusConflict, "a connection with this id already exists")
 		return
 	}
 	writeJSON(w, http.StatusCreated, c)

@@ -22,8 +22,23 @@ import (
 var cronParser = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 
 const (
-	maxRetryLimit        = 5
-	maxRetryDelaySeconds = 300
+	maxRetryLimit = 5
+	// maxRetryDelaySeconds and maxHTTPRequestTimeoutSeconds are bounded by
+	// JobExecutionTimeout below, not chosen independently: retries sleep
+	// synchronously inside the job-execution request (see executeJob), so
+	// retryLimit attempts × (per-attempt timeout + retryDelaySeconds) has to
+	// fit inside that one request's budget on hosts with an execution-time
+	// ceiling (e.g. Vercel's Hobby tier — see docs/DEPLOYMENT.md).
+	maxRetryDelaySeconds = 10
+
+	// JobExecutionTimeout bounds one job-execution request (RunJobNow,
+	// JobsTick) end-to-end, matching the longer timeout server.go grants
+	// those routes specifically (see its comment for why they need more
+	// than the default request timeout). Kept comfortably under a
+	// Hobby-tier Vercel deployment's execution ceiling; raise it (and the
+	// per-attempt/retry-delay maximums below) if deploying somewhere with
+	// more headroom.
+	JobExecutionTimeout = 55 * time.Second
 )
 
 type Job struct {
@@ -136,7 +151,10 @@ type httpRequestJobConfig struct {
 	TimeoutSeconds int `json:"timeoutSeconds,omitempty"`
 }
 
-const maxHTTPRequestTimeoutSeconds = 280
+// maxHTTPRequestTimeoutSeconds leaves headroom under JobExecutionTimeout for
+// the rest of executeJob's work (dependency check, retries, recording the
+// run) — see the comment on maxRetryDelaySeconds.
+const maxHTTPRequestTimeoutSeconds = 40
 
 func normalizeJobRequest(req *jobRequest) error {
 	if req.JobType == "" {
@@ -573,16 +591,33 @@ func (s *Server) executeJob(ctx context.Context, userID int64, j Job, triggeredB
 	run := JobRun{JobID: j.ID, TriggeredBy: triggeredBy, RunDate: runDate.Format(dateOnlyLayout), StartedAt: started, Attempts: 0}
 
 	blocked := false
+	timedOut := false
 	for _, depID := range j.DependsOn {
 		var lastStatus string
 		err := s.Pool.QueryRow(ctx, `SELECT last_status FROM jobs WHERE id = $1 AND user_id = $2`, depID, userID).Scan(&lastStatus)
-		if err != nil || lastStatus != "success" {
+		if err != nil {
+			// Distinguish "ran out of time checking" from "checked and it
+			// hasn't succeeded" — a context deadline here isn't evidence the
+			// dependency failed, and labeling it "blocked" would mislead
+			// anyone debugging the schedule.
+			if ctx.Err() != nil {
+				timedOut = true
+			} else {
+				blocked = true
+			}
+			break
+		}
+		if lastStatus != "success" {
 			blocked = true
 			break
 		}
 	}
 
-	if blocked {
+	if timedOut {
+		run.Status = "failed"
+		errMsg := "timed out checking job dependencies"
+		run.Error = &errMsg
+	} else if blocked {
 		run.Status = "blocked"
 		errMsg := "a dependency job has not succeeded yet"
 		run.Error = &errMsg

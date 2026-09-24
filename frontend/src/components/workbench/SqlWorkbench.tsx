@@ -131,7 +131,7 @@ export function SqlWorkbench({
       {view === "data" ? (
         <DataBrowser key={connection.id} connection={connection} onOpenQuery={(tableName) => { openTable(tableName); setView("query"); }} onOpenSql={(title, sql) => { openSql(title, sql); setView("query"); }} />
       ) : view === "history" ? (
-        <HistoryPanel connection={connection} onOpenSql={(title, sql) => { openSql(title, sql); setView("query"); }} />
+        <HistoryPanel key={connection.id} connection={connection} onOpenSql={(title, sql) => { openSql(title, sql); setView("query"); }} />
       ) : view === "graphs" ? (
         <ConnectionGraphs connection={connection} />
       ) : view === "erd" ? (

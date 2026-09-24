@@ -69,7 +69,9 @@ export default function AddJob() {
   const [cronExpr, setCronExpr] = useState(existing?.cronExpr ?? CRON_PRESETS[0].value);
   const [dependsOn, setDependsOn] = useState<string[]>(existing?.dependsOn ?? []);
   const [retryLimit, setRetryLimit] = useState(String(existing?.retryLimit ?? 0));
-  const [retryDelaySeconds, setRetryDelaySeconds] = useState(String(existing?.retryDelaySeconds ?? 30));
+  // Server clamps to maxRetryDelaySeconds (jobs.go) — keep this default at or
+  // under that so a new job doesn't silently get a shorter delay than shown.
+  const [retryDelaySeconds, setRetryDelaySeconds] = useState(String(existing?.retryDelaySeconds ?? 5));
   const [checkMode, setCheckMode] = useState<CheckMode>(existing?.checkMode ?? "none");
   const [saving, setSaving] = useState(false);
 

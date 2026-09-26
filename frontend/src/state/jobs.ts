@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { CardLayout, CheckMode, HttpRequestJobConfig, JobRun, JobType, ScheduledJob } from "@/lib/types";
 import { useAuthStore } from "@/state/auth";
+import { useToastStore } from "@/state/toast";
 import { FIELD_CENTER, GRID_UNIT, snapToGrid } from "@/lib/canvasBounds";
 import * as api from "@/lib/api";
 
@@ -56,7 +57,16 @@ interface JobsState {
   runNow: (id: string, options?: { date?: string; downstream?: boolean }) => Promise<JobRun[]>;
 }
 
-export const useJobsStore = create<JobsState>()((set, get) => ({
+export const useJobsStore = create<JobsState>()((set, get) => {
+  // Edits apply to the list immediately and sync in the background; if the
+  // server rejects one, the list is reloaded from the server so the UI never
+  // keeps a change (enabled state, layout, existence) that didn't stick.
+  function failed(message: string) {
+    useToastStore.getState().show(message);
+    void get().loadJobs();
+  }
+
+  return {
   jobs: [],
   loaded: false,
 
@@ -98,7 +108,7 @@ export const useJobsStore = create<JobsState>()((set, get) => ({
   removeJob: (id) => {
     set((s) => ({ jobs: s.jobs.filter((j) => j.id !== id) }));
     const token = useAuthStore.getState().token;
-    if (token) api.deleteJob(token, id).catch(() => {});
+    if (token) api.deleteJob(token, id).catch(() => failed("Could not delete the job."));
   },
 
   toggleEnabled: (id) => {
@@ -107,13 +117,13 @@ export const useJobsStore = create<JobsState>()((set, get) => ({
     if (!token || !job) return;
     const updated = { ...job, enabled: !job.enabled };
     set((s) => ({ jobs: s.jobs.map((j) => (j.id === id ? updated : j)) }));
-    api.updateJob(token, updated).catch(() => {});
+    api.updateJob(token, updated).catch(() => failed(`Could not ${updated.enabled ? "enable" : "disable"} the job.`));
   },
 
   updateLayout: (id, layout) => {
     set((s) => ({ jobs: s.jobs.map((j) => (j.id === id ? { ...j, layout } : j)) }));
     const token = useAuthStore.getState().token;
-    if (token) api.updateJobLayout(token, id, layout).catch(() => {});
+    if (token) api.updateJobLayout(token, id, layout).catch(() => failed("Could not save the job's position."));
   },
 
   runNow: async (id, options) => {
@@ -129,4 +139,5 @@ export const useJobsStore = create<JobsState>()((set, get) => ({
     }));
     return runs;
   },
-}));
+  };
+});

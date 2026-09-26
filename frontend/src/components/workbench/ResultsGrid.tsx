@@ -18,7 +18,9 @@ const MIN_COL_WIDTH = 140;
 interface EditableTable {
   schema: string;
   table: string;
-  pkIndex: number;
+  // Every primary-key column's index — a composite key needs all of them in
+  // the WHERE clause, or an edit can silently match more than one row.
+  pkIndexes: number[];
 }
 
 interface PendingEdit {
@@ -62,9 +64,9 @@ export function ResultsGrid({
     if (!first.sourceTable) return null;
     const sameTable = cols.every((c) => c.sourceSchema === first.sourceSchema && c.sourceTable === first.sourceTable);
     if (!sameTable) return null;
-    const pkIndex = cols.findIndex((c) => c.isPrimaryKey);
-    if (pkIndex === -1) return null;
-    return { schema: first.sourceSchema!, table: first.sourceTable!, pkIndex };
+    const pkIndexes = cols.flatMap((c, i) => (c.isPrimaryKey ? [i] : []));
+    if (pkIndexes.length === 0) return null;
+    return { schema: first.sourceSchema!, table: first.sourceTable!, pkIndexes };
   }, [result]);
 
   useEffect(() => {
@@ -91,7 +93,7 @@ export function ResultsGrid({
   }
 
   function startEdit(rowIndex: number, colIndex: number, currentValue: string | null) {
-    if (!editableTable || readOnly || colIndex === editableTable.pkIndex) return;
+    if (!editableTable || readOnly || editableTable.pkIndexes.includes(colIndex)) return;
     setEditingCell({ row: rowIndex, col: colIndex });
     setEditValue(currentValue ?? "");
   }
@@ -107,8 +109,8 @@ export function ResultsGrid({
   async function confirmEdit() {
     if (!pendingEdit || !editableTable || !token) return;
     const row = rows[pendingEdit.row];
-    const pkValue = row[editableTable.pkIndex];
-    if (pkValue === null) {
+    const pk = editableTable.pkIndexes.map((i) => ({ column: columns[i].name, value: row[i] }));
+    if (pk.some((p) => p.value === null)) {
       setSaveError("Can't edit a row whose primary key is null.");
       return;
     }
@@ -120,8 +122,7 @@ export function ResultsGrid({
         table: editableTable.table,
         column: columns[pendingEdit.col].name,
         value: pendingEdit.value,
-        pkColumn: columns[editableTable.pkIndex].name,
-        pkValue,
+        pk: pk as { column: string; value: string }[],
       });
       onEdited(pendingEdit.row, pendingEdit.col, pendingEdit.value);
       setPendingEdit(null);
@@ -184,7 +185,7 @@ export function ResultsGrid({
                   <div className="px-2.5 text-text-disabled">{globalIndex + 1}</div>
                   {row.map((cell, i) => {
                     const isEditing = editingCell?.row === globalIndex && editingCell.col === i;
-                    const isEditable = !!editableTable && !readOnly && i !== editableTable.pkIndex;
+                    const isEditable = !!editableTable && !readOnly && !editableTable.pkIndexes.includes(i);
                     if (isEditing) {
                       return (
                         <input
@@ -289,7 +290,7 @@ export function ResultsGrid({
             <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[480px] -translate-x-1/2 -translate-y-1/2 rounded-[10px] border border-border-elevated bg-bg-raised p-5 shadow-2xl">
               <Dialog.Title className="mb-3 text-[14px] font-semibold text-text-primary">Confirm update</Dialog.Title>
               <div className="overflow-x-auto rounded-[7px] border border-border-input bg-bg-inset px-3 py-2.5 font-mono text-[11.5px] text-text-secondary">
-                {`UPDATE "${editableTable.schema}"."${editableTable.table}" SET "${columns[pendingEdit.col].name}" = '${pendingEdit.value.replace(/'/g, "''")}' WHERE "${columns[editableTable.pkIndex].name}" = '${String(rows[pendingEdit.row][editableTable.pkIndex]).replace(/'/g, "''")}';`}
+                {`UPDATE "${editableTable.schema}"."${editableTable.table}" SET "${columns[pendingEdit.col].name}" = '${pendingEdit.value.replace(/'/g, "''")}' WHERE ${editableTable.pkIndexes.map((i) => `"${columns[i].name}" = '${String(rows[pendingEdit.row][i]).replace(/'/g, "''")}'`).join(" AND ")};`}
               </div>
               {saveError && <div className="mt-3 text-[11.5px] text-error-text">{saveError}</div>}
               <div className="mt-5 flex justify-end gap-2">

@@ -194,6 +194,20 @@ CREATE TABLE IF NOT EXISTS saved_views (
 	UNIQUE (user_id, connection_id, schema_name, table_name, name)
 );
 
+-- request_owners records who a cancellable requestId belongs to (see
+-- request_cancel.go), so CancelRequest can refuse to terminate a session it
+-- didn't actually tag — otherwise two users whose connections happen to
+-- point at the same physical database (same role) could terminate each
+-- other's queries purely by matching requestId. Short-lived by nature: a row
+-- only needs to outlive the request it tags, so old ones are pruned
+-- opportunistically (see recordRequestOwner) rather than needing a cron job.
+CREATE TABLE IF NOT EXISTS request_owners (
+	request_id TEXT PRIMARY KEY,
+	user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	connection_id TEXT NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE INDEX IF NOT EXISTS idx_saved_views_connection ON saved_views(user_id, connection_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_analytics_events_user_id ON analytics_events(user_id);

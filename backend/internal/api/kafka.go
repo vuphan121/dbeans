@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -20,6 +21,31 @@ import (
 )
 
 const maxKafkaMessages = 100
+
+// maxKafkaConcurrency bounds how many partitions' leader connections are
+// dialed at once — high enough to turn a wide topic's per-partition latency
+// from additive (one dial after another) into roughly one round trip's
+// worth, without opening an unbounded number of TCP connections to the
+// broker for a topic with hundreds of partitions.
+const maxKafkaConcurrency = 8
+
+// forEachPartition runs fn once per partition, up to maxKafkaConcurrency at
+// a time, and waits for all of them to finish. fn is responsible for its own
+// synchronization if it mutates shared state.
+func forEachPartition(partitions []kafka.Partition, fn func(kafka.Partition)) {
+	sem := make(chan struct{}, maxKafkaConcurrency)
+	var wg sync.WaitGroup
+	for _, p := range partitions {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(p kafka.Partition) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			fn(p)
+		}(p)
+	}
+	wg.Wait()
+}
 
 type kafkaConnFields struct {
 	Brokers      string `json:"brokers"`
@@ -113,17 +139,31 @@ func (s *Server) ListKafkaTopics(w http.ResponseWriter, r *http.Request) {
 			byName[partition.Topic] = topic
 		}
 		topic.Partitions++
-		leader, dialErr := dialer.DialLeader(r.Context(), "tcp", brokers[0], partition.Topic, partition.ID)
-		if dialErr == nil {
-			_ = leader.SetDeadline(time.Now().Add(8 * time.Second))
-			first, firstErr := leader.ReadFirstOffset()
-			last, lastErr := leader.ReadLastOffset()
-			_ = leader.Close()
-			if firstErr == nil && lastErr == nil && last > first {
-				topic.ApproxMessages += last - first
-			}
-		}
 	}
+	// Approximate message counts are independent per partition — dialing
+	// each leader and reading its offsets one after another turns a
+	// many-partition topic into a many-dial wait; do them concurrently
+	// instead so total latency is close to one dial's worth.
+	var mu sync.Mutex
+	forEachPartition(partitions, func(partition kafka.Partition) {
+		if partition.Topic == "" {
+			return
+		}
+		leader, dialErr := dialer.DialLeader(r.Context(), "tcp", brokers[0], partition.Topic, partition.ID)
+		if dialErr != nil {
+			return
+		}
+		_ = leader.SetDeadline(time.Now().Add(8 * time.Second))
+		first, firstErr := leader.ReadFirstOffset()
+		last, lastErr := leader.ReadLastOffset()
+		_ = leader.Close()
+		if firstErr != nil || lastErr != nil || last <= first {
+			return
+		}
+		mu.Lock()
+		byName[partition.Topic].ApproxMessages += last - first
+		mu.Unlock()
+	})
 	topics := make([]kafkaTopic, 0, len(byName))
 	for _, topic := range byName {
 		topics = append(topics, *topic)
@@ -161,29 +201,36 @@ func (s *Server) ListKafkaMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := []kafkaMessageResponse{}
+	var resultMu sync.Mutex
 	perPartition := maxKafkaMessages / max(1, len(partitions))
-	for _, partition := range partitions {
+	// Independent per partition — dialing each leader, seeking, and reading
+	// one partition after another turns a many-partition topic into a
+	// many-dial wait; do them concurrently instead. Each still reads at most
+	// its own perPartition share, and the final sort+cap below already
+	// enforces the maxKafkaMessages total regardless of arrival order, so
+	// concurrency doesn't change what's ultimately returned.
+	forEachPartition(partitions, func(partition kafka.Partition) {
 		leader, dialErr := dialer.DialLeader(r.Context(), "tcp", brokers[0], topic, partition.ID)
 		if dialErr != nil {
-			continue
+			return
 		}
+		defer leader.Close()
 		_ = leader.SetDeadline(time.Now().Add(8 * time.Second))
 		first, firstErr := leader.ReadFirstOffset()
 		last, lastErr := leader.ReadLastOffset()
 		if firstErr != nil || lastErr != nil {
-			_ = leader.Close()
-			continue
+			return
 		}
 		start := last - int64(perPartition)
 		if start < first {
 			start = first
 		}
 		if _, err := leader.Seek(start, io.SeekStart); err != nil {
-			_ = leader.Close()
-			continue
+			return
 		}
 		_ = leader.SetReadDeadline(time.Now().Add(2 * time.Second))
-		for int64(len(result)) < int64(maxKafkaMessages) {
+		partitionResult := make([]kafkaMessageResponse, 0, perPartition)
+		for int64(len(partitionResult)) < int64(perPartition) {
 			message, readErr := leader.ReadMessage(1024 * 1024)
 			if readErr != nil {
 				break
@@ -197,13 +244,15 @@ func (s *Server) ListKafkaMessages(w http.ResponseWriter, r *http.Request) {
 			for _, header := range message.Headers {
 				headers[header.Key] = string(header.Value)
 			}
-			result = append(result, kafkaMessageResponse{Partition: message.Partition, Offset: message.Offset, Timestamp: message.Time.UTC().Format("2006-01-02 15:04:05.000"), Key: key, Value: string(message.Value), Headers: headers})
+			partitionResult = append(partitionResult, kafkaMessageResponse{Partition: message.Partition, Offset: message.Offset, Timestamp: message.Time.UTC().Format("2006-01-02 15:04:05.000"), Key: key, Value: string(message.Value), Headers: headers})
 			if message.Offset+1 >= last {
 				break
 			}
 		}
-		_ = leader.Close()
-	}
+		resultMu.Lock()
+		result = append(result, partitionResult...)
+		resultMu.Unlock()
+	})
 	sort.Slice(result, func(i, j int) bool { return result[i].Timestamp > result[j].Timestamp })
 	if len(result) > maxKafkaMessages {
 		result = result[:maxKafkaMessages]

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 
 	"dbeans/backend/internal/auth"
@@ -385,6 +386,7 @@ func (s *Server) RunConnectionQuery(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.withTableConnection(w, r, false, func(ctx context.Context, conn *pgx.Conn, _ sqlConnFields) {
+		s.recordRequestOwner(ctx, user.ID, chi.URLParam(r, "id"), req.RequestID)
 		s.runConnectionQuery(w, ctx, conn, req)
 	})
 }
@@ -489,13 +491,21 @@ func (s *Server) runConnectionQuery(w http.ResponseWriter, ctx context.Context, 
 	})
 }
 
+type pkPair struct {
+	Column string `json:"column"`
+	Value  string `json:"value"`
+}
+
 type updateCellRequest struct {
-	Schema   string  `json:"schema"`
-	Table    string  `json:"table"`
-	Column   string  `json:"column"`
-	Value    *string `json:"value"`
-	PKColumn string  `json:"pkColumn"`
-	PKValue  string  `json:"pkValue"`
+	Schema string  `json:"schema"`
+	Table  string  `json:"table"`
+	Column string  `json:"column"`
+	Value  *string `json:"value"`
+	// PK is every primary-key column/value pair for the target row — a
+	// composite key needs all of them in the WHERE clause, not just one, or
+	// the UPDATE can silently match (and change) more than the one row the
+	// user actually edited.
+	PK []pkPair `json:"pk"`
 }
 
 // UpdateConnectionCell applies one inline result-grid edit as a parameterized
@@ -508,19 +518,51 @@ type updateCellRequest struct {
 func (s *Server) UpdateConnectionCell(w http.ResponseWriter, r *http.Request) {
 	var req updateCellRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
-		req.Schema == "" || req.Table == "" || req.Column == "" || req.PKColumn == "" {
-		writeError(w, http.StatusBadRequest, "schema, table, column, and pkColumn are required")
+		req.Schema == "" || req.Table == "" || req.Column == "" || len(req.PK) == 0 {
+		writeError(w, http.StatusBadRequest, "schema, table, column, and at least one pk column are required")
 		return
+	}
+	for _, pk := range req.PK {
+		if pk.Column == "" {
+			writeError(w, http.StatusBadRequest, "every pk entry needs a column")
+			return
+		}
 	}
 
 	s.withTableConnection(w, r, true, func(ctx context.Context, conn *pgx.Conn, _ sqlConnFields) {
-		stmt := fmt.Sprintf(`UPDATE %s SET %s = $1 WHERE %s = $2`,
+		where := make([]string, len(req.PK))
+		args := make([]any, 0, len(req.PK)+1)
+		args = append(args, req.Value)
+		for i, pk := range req.PK {
+			where[i] = fmt.Sprintf("%s = $%d", pgx.Identifier{pk.Column}.Sanitize(), i+2)
+			args = append(args, pk.Value)
+		}
+		stmt := fmt.Sprintf(`UPDATE %s SET %s = $1 WHERE %s`,
 			pgx.Identifier{req.Schema, req.Table}.Sanitize(),
 			pgx.Identifier{req.Column}.Sanitize(),
-			pgx.Identifier{req.PKColumn}.Sanitize())
+			strings.Join(where, " AND "))
 
-		tag, err := conn.Exec(ctx, stmt, req.Value, req.PKValue)
+		// A transaction, not a bare Exec: a well-formed primary key (every PK
+		// column supplied) always identifies at most one row, so if the
+		// UPDATE matches more than one, the key was incomplete/stale and the
+		// WHERE clause was too broad. Roll back rather than have already
+		// silently changed every matching row by the time that's noticed.
+		tx, err := conn.Begin(ctx)
 		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		defer tx.Rollback(ctx)
+		tag, err := tx.Exec(ctx, stmt, args...)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		if affected := tag.RowsAffected(); affected != 1 {
+			writeError(w, http.StatusConflict, fmt.Sprintf("expected to update exactly one row, matched %d — the row may have changed; reload and try again", affected))
+			return
+		}
+		if err := tx.Commit(ctx); err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}

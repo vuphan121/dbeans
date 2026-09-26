@@ -16,7 +16,6 @@ import "@xyflow/react/dist/style.css";
 import { Search, Plus } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { useConnectionsStore } from "@/state/connections";
-import { useUiStore } from "@/state/ui";
 import { requestOpenConnection } from "@/lib/openConnection";
 import { shouldSuppressNodeClick } from "@/lib/contextMenuGuard";
 import { isModPressed, isTypingTarget } from "@/lib/platform";
@@ -68,12 +67,6 @@ export default function Connections() {
     }
   }, [connections, pingConnection]);
 
-  // Defensive reset: if a previous "open" got interrupted (e.g. browser
-  // back-navigation mid-transition), don't leave the board stuck refusing
-  // clicks because openingConnectionId is still set from last time.
-  useEffect(() => {
-    useUiStore.getState().setOpeningConnectionId(null);
-  }, []);
   const [nodes, setNodes] = useState<Node[]>(() =>
     connections.map((c) => buildNode(c.id, c.layout)),
   );

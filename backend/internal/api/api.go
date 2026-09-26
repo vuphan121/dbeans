@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 
@@ -141,9 +142,11 @@ func (s *Server) TrackEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	uid := user.ID
+	// Best-effort per this handler's own doc comment: a logging failure is
+	// logged server-side, not surfaced to the caller (matches Login/Logout/
+	// logTableMutation, which all discard this same LogEvent error too).
 	if err := analytics.LogEvent(r.Context(), s.Pool, token, &uid, req.Type, req.Payload); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to log event")
-		return
+		log.Printf("log event %q: %v", req.Type, err)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

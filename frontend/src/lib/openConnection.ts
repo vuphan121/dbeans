@@ -15,6 +15,13 @@ export function requestOpenConnection(
   if (openingConnectionId) return; // already opening something — ignore extra clicks
   setOpeningConnectionId(id);
   window.setTimeout(() => {
+    // The user may have navigated away (or opened a different connection)
+    // in the meantime — RequireAuth resets openingConnectionId on every
+    // authenticated-page navigation for exactly this reason. Without this
+    // check the timer would still fire and yank the user into the
+    // workbench / swap the active connection out from under whatever
+    // they're doing now.
+    if (useUiStore.getState().openingConnectionId !== id) return;
     setActiveConnection(id);
     navigate("/workbench");
   }, OPEN_DELAY_MS);

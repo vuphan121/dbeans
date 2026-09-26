@@ -3,10 +3,15 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"regexp"
+	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+
+	"dbeans/backend/internal/auth"
 )
 
 // Explicit cancellation of in-flight requests that run user-visible SQL: Data-view
@@ -80,17 +85,54 @@ func terminateRequest(ctx context.Context, conn *pgx.Conn, id string) (int, erro
 	return terminated, rows.Err()
 }
 
+// requestOwnerTTL bounds how long a recorded owner row needs to live: only
+// as long as the tagged statement it identifies could plausibly still be
+// running and cancellable. Rows past this age are pruned opportunistically
+// rather than needing a cron job of their own.
+const requestOwnerTTL = 10 * time.Minute
+
+// recordRequestOwner ties a cancellable requestId to the user and connection
+// that tagged it, so CancelRequest can later refuse to terminate a session
+// it didn't actually tag (see terminateRequest's comment on why matching by
+// database name and tag alone isn't sufficient once two users' connections
+// can point at the same physical database). Best-effort: a failure here
+// only means that request won't be cancellable, never that the query it
+// tags shouldn't run — callers ignore the return value's absence of error
+// reporting by design, matching this endpoint's existing best-effort ethos.
+func (s *Server) recordRequestOwner(ctx context.Context, userID int64, connectionID, requestID string) {
+	if !validRequestID(requestID) {
+		return
+	}
+	if _, err := s.Pool.Exec(ctx, `
+		INSERT INTO request_owners (request_id, user_id, connection_id) VALUES ($1, $2, $3)
+		ON CONFLICT (request_id) DO NOTHING`,
+		requestID, userID, connectionID); err != nil {
+		log.Printf("record request owner %s: %v", requestID, err)
+		return
+	}
+	// Opportunistic cleanup, piggybacked on the same write instead of a
+	// separate scheduled job — cheap given how few rows are ever live at once.
+	if _, err := s.Pool.Exec(ctx, `DELETE FROM request_owners WHERE created_at < now() - $1::interval`,
+		requestOwnerTTL.String()); err != nil {
+		log.Printf("prune request owners: %v", err)
+	}
+}
+
 type cancelRequest struct {
 	RequestID string `json:"requestId"`
 }
 
 // CancelRequest is the "stop that request" call. It runs against the same
-// connection (same credentials) as the request it cancels, so it can only ever
-// terminate sessions the caller could already have terminated themselves.
-// Best-effort by nature: a cancel that arrives before the tagged statement has
-// started terminates nothing (the client retries shortly after). Terminating a
-// session rolls back its open transaction, so a cancelled write leaves nothing
-// half-applied — but a statement that had already committed is not undone.
+// connection (same credentials) as the request it cancels, and additionally
+// requires that this exact requestId was tagged by this same user against
+// this same connection (see recordRequestOwner) — otherwise it refuses,
+// rather than relying solely on terminateRequest's database-name-and-tag
+// match, which alone isn't safe when two users' connections can point at the
+// same physical database. Best-effort by nature: a cancel that arrives before
+// the tagged statement has started terminates nothing (the client retries
+// shortly after). Terminating a session rolls back its open transaction, so a
+// cancelled write leaves nothing half-applied — but a statement that had
+// already committed is not undone.
 func (s *Server) CancelRequest(w http.ResponseWriter, r *http.Request) {
 	var req cancelRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !validRequestID(req.RequestID) {
@@ -98,11 +140,41 @@ func (s *Server) CancelRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.withTableConnection(w, r, false, func(ctx context.Context, conn *pgx.Conn, _ sqlConnFields) {
+		user, connID, ok := s.resolveRequestOwner(ctx, r)
+		if !ok {
+			writeError(w, http.StatusForbidden, "this request cannot be cancelled from here")
+			return
+		}
+		var owned bool
+		if err := s.Pool.QueryRow(ctx, `
+			SELECT EXISTS(SELECT 1 FROM request_owners WHERE request_id = $1 AND user_id = $2 AND connection_id = $3)`,
+			req.RequestID, user, connID).Scan(&owned); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to verify request ownership")
+			return
+		}
+		if !owned {
+			writeError(w, http.StatusForbidden, "this request cannot be cancelled from here")
+			return
+		}
 		n, err := terminateRequest(ctx, conn, req.RequestID)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, err.Error())
 			return
 		}
+		_, _ = s.Pool.Exec(ctx, `DELETE FROM request_owners WHERE request_id = $1`, req.RequestID)
 		writeJSON(w, http.StatusOK, map[string]int{"terminated": n})
 	})
+}
+
+// resolveRequestOwner re-derives the caller's user id and the connection id
+// from the URL, the same way withTableConnection already validated them for
+// this same request — cheap (an in-memory-cached session lookup, not a new
+// round trip class) and avoids threading auth.User through withTableConnection
+// just for this one check.
+func (s *Server) resolveRequestOwner(ctx context.Context, r *http.Request) (userID int64, connectionID string, ok bool) {
+	user, err := auth.Resolve(ctx, s.Pool, bearerToken(r))
+	if err != nil {
+		return 0, "", false
+	}
+	return user.ID, chi.URLParam(r, "id"), true
 }

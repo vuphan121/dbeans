@@ -15,10 +15,23 @@ import { useConnectionsStore } from "@/state/connections";
 import { useJobsStore } from "@/state/jobs";
 import { useSecretsStore } from "@/state/secrets";
 import { useSnippetsStore } from "@/state/snippets";
+import { useUiStore } from "@/state/ui";
 import { applyThemeToDocument, useSettingsStore, watchSystemTheme } from "@/state/settings";
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { isUnlocked, checking } = useAuthStore();
+  // React Router remounts this on every navigation between authenticated
+  // routes (each <Route> below renders its own <RequireAuth> instance), so
+  // this doubles as a reset on every page change: it clears
+  // openingConnectionId whether the user got here by finishing the
+  // open-connection flow itself, navigating away mid-transition (browser
+  // back, clicking elsewhere before the delay elapses), or anything else —
+  // see lib/openConnection.ts's requestOpenConnection for why a stale
+  // pending open needs this rather than just checking on its own timer.
+  // oxlint-disable-next-line react/set-state-in-effect
+  useEffect(() => {
+    useUiStore.getState().setOpeningConnectionId(null);
+  }, []);
   if (checking) return null;
   if (!isUnlocked) return <Navigate to="/login" replace />;
   return (

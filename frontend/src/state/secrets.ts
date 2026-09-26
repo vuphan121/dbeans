@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { Secret } from "@/lib/types";
 import { useAuthStore } from "@/state/auth";
+import { useToastStore } from "@/state/toast";
 import * as api from "@/lib/api";
 
 interface SecretsState {
@@ -12,7 +13,16 @@ interface SecretsState {
   removeSecret: (id: string) => void;
 }
 
-export const useSecretsStore = create<SecretsState>()((set, get) => ({
+export const useSecretsStore = create<SecretsState>()((set, get) => {
+  // Deleting applies to the list immediately and syncs in the background; if
+  // the server rejects it, reload from the server so the UI never keeps a
+  // delete that didn't actually stick.
+  function failed(message: string) {
+    useToastStore.getState().show(message);
+    void get().loadSecrets();
+  }
+
+  return {
   secrets: [],
   loaded: false,
 
@@ -47,6 +57,7 @@ export const useSecretsStore = create<SecretsState>()((set, get) => ({
   removeSecret: (id) => {
     set((s) => ({ secrets: s.secrets.filter((sec) => sec.id !== id) }));
     const token = useAuthStore.getState().token;
-    if (token) api.deleteSecret(token, id).catch(() => {});
+    if (token) api.deleteSecret(token, id).catch(() => failed("Could not delete the secret."));
   },
-}));
+  };
+});

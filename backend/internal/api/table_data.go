@@ -409,6 +409,9 @@ func (s *Server) BrowseTableData(w http.ResponseWriter, r *http.Request) {
 		req.PageSize = 100
 	}
 	s.withTableConnection(w, r, false, func(ctx context.Context, conn *pgx.Conn, _ sqlConnFields) {
+		if userID, connID, ok := s.resolveRequestOwner(ctx, r); ok {
+			s.recordRequestOwner(ctx, userID, connID, req.RequestID)
+		}
 		columns, known, tableType, err := tableMetadata(ctx, conn, req.Schema, req.Table)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
@@ -492,6 +495,9 @@ func (s *Server) CountTableData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.withTableConnection(w, r, false, func(ctx context.Context, conn *pgx.Conn, _ sqlConnFields) {
+		if userID, connID, ok := s.resolveRequestOwner(ctx, r); ok {
+			s.recordRequestOwner(ctx, userID, connID, req.RequestID)
+		}
 		_, known, _, err := tableMetadata(ctx, conn, req.Schema, req.Table)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())

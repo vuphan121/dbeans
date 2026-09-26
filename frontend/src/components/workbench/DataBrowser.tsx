@@ -77,7 +77,13 @@ export function DataBrowser({ connection, onOpenQuery, onOpenSql }: { connection
   // Memoized (not just `??`'d) so its reference is stable across renders
   // that don't actually change it — columnIndex below depends on it.
   const columns = useMemo(() => data?.columns ?? selected?.table.columns ?? [], [data?.columns, selected?.table.columns]);
-  const displayedColumns = (columnOrder.length ? columnOrder : columns.map((c) => c.name)).map((name) => columns.find((c) => c.name === name)).filter((c): c is ColumnInfo => !!c && !hidden.has(c.name));
+  // A saved columnOrder can predate a column added to the table since; append
+  // any column missing from it (visible by default) instead of letting it
+  // silently vanish from both the grid and the Columns dialog.
+  const effectiveColumnOrder = columnOrder.length
+    ? [...columnOrder, ...columns.map((c) => c.name).filter((name) => !columnOrder.includes(name))]
+    : columns.map((c) => c.name);
+  const displayedColumns = effectiveColumnOrder.map((name) => columns.find((c) => c.name === name)).filter((c): c is ColumnInfo => !!c && !hidden.has(c.name));
   // Row rendering below looks up each displayed cell's index by column name
   // for every row; a map avoids re-scanning `columns` per cell.
   const columnIndex = useMemo(() => new Map(columns.map((c, i) => [c.name, i])), [columns]);
@@ -220,7 +226,7 @@ export function DataBrowser({ connection, onOpenQuery, onOpenSql }: { connection
       }
     }} />}
     {deleteRows && <Confirm title={`Delete ${deleteRows.length === 1 ? "this row" : `${deleteRows.length} rows`}?`} body="This permanently removes the selected data. This action cannot be undone." confirm="Delete" loading={loading} onCancel={() => setDeleteRows(null)} onConfirm={() => void removeRows()} />}
-    {columnsOpen && <ColumnsDialog columns={columns} order={columnOrder} hidden={hidden} onClose={() => setColumnsOpen(false)} onApply={(order, nextHidden) => { setColumnOrder(order); setHidden(nextHidden); setColumnsOpen(false); }} />}
+    {columnsOpen && <ColumnsDialog columns={columns} order={effectiveColumnOrder} hidden={hidden} onClose={() => setColumnsOpen(false)} onApply={(order, nextHidden) => { setColumnOrder(order); setHidden(nextHidden); setColumnsOpen(false); }} />}
     {schemaOpen && <SchemaDialog selected={selected} tables={tables} connection={connection} onClose={() => setSchemaOpen(false)} onOpenSql={onOpenSql} onApplied={async () => { await loadSchema(connection.id); await refresh(true); }} />}
     {importOpen && <ImportDialog connectionId={connection.id} schema={selected.schema} table={selected.table.name} columns={columns} onClose={() => setImportOpen(false)} onImported={(rows) => { setImportOpen(false); showToast(`Imported ${rows.toLocaleString()} row${rows === 1 ? "" : "s"} into ${selected.schema}.${selected.table.name}.`); void refresh(true); }} />}
   </div>;

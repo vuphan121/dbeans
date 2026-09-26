@@ -165,8 +165,10 @@ export interface UpdateCellInput {
   table: string;
   column: string;
   value: string | null;
-  pkColumn: string;
-  pkValue: string;
+  // Every primary-key column/value pair for the target row — a composite key
+  // needs all of them, or the server's WHERE clause can match more than the
+  // one row being edited.
+  pk: { column: string; value: string }[];
 }
 
 export function updateCell(token: string, id: string, input: UpdateCellInput): Promise<{ ok: boolean; rowsAffected: number }> {

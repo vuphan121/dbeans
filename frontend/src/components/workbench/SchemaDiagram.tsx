@@ -199,12 +199,20 @@ function layoutTables(tables: TableInfo[], edges: { from: string; to: string }[]
   g.setGraph({ rankdir: "LR", nodesep: 24, ranksep: RANK_GAP, marginx: 0, marginy: 0 });
   g.setDefaultEdgeLabel(() => ({}));
 
+  const known = new Set<string>();
   for (const t of tables) {
     g.setNode(t.name, { width: NODE_WIDTH, height: tableNodeHeight(t) });
+    known.add(t.name);
   }
   const seen = new Set<string>();
   for (const e of edges) {
     if (e.from === e.to) continue;
+    // A FK can reference a table outside this schema view (e.g. filtered out
+    // of introspection, or briefly stale after a live schema change) — dagre
+    // auto-creates an unlabeled node for setEdge's endpoints, and later
+    // crashes reading its width/height. Skip rather than let one bad edge
+    // blank the whole diagram.
+    if (!known.has(e.from) || !known.has(e.to)) continue;
     const key = `${e.to}->${e.from}`;
     if (seen.has(key)) continue; // dagre errors on duplicate edges between the same pair
     seen.add(key);

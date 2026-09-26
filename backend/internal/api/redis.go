@@ -155,6 +155,98 @@ func readRedisEntry(ctx context.Context, client *redis.Client, key string) (redi
 	return entry, err
 }
 
+// readRedisEntries reads TYPE/TTL/value for many keys using two pipelined
+// round trips total (one for every key's TYPE+TTL, one for every key's
+// type-specific value read) instead of readRedisEntry's ~3-4 sequential
+// round trips *per key* — turns an O(keys) network-bound loop into O(1).
+// Keys that fail to read (an unsupported type, a key that expired mid-scan)
+// are silently omitted, matching readRedisEntry's per-key error handling in
+// ListRedisKeys' previous sequential loop.
+func readRedisEntries(ctx context.Context, client *redis.Client, keys []string) []redisKeyEntry {
+	if len(keys) == 0 {
+		return []redisKeyEntry{}
+	}
+	typePipe := client.Pipeline()
+	typeCmds := make(map[string]*redis.StatusCmd, len(keys))
+	ttlCmds := make(map[string]*redis.DurationCmd, len(keys))
+	for _, key := range keys {
+		typeCmds[key] = typePipe.Type(ctx, key)
+		ttlCmds[key] = typePipe.TTL(ctx, key)
+	}
+	_, _ = typePipe.Exec(ctx)
+
+	type pending struct {
+		key  string
+		typ  string
+		ttl  *int64
+		str  *redis.StringCmd
+		hash *redis.MapStringStringCmd
+		list *redis.StringSliceCmd
+		set  *redis.StringSliceCmd
+		zset *redis.ZSliceCmd
+	}
+	valuePipe := client.Pipeline()
+	pendings := make([]*pending, 0, len(keys))
+	for _, key := range keys {
+		typ, err := typeCmds[key].Result()
+		if err != nil {
+			continue
+		}
+		var ttl *int64
+		if d, err := ttlCmds[key].Result(); err == nil && d >= 0 {
+			seconds := int64(d.Seconds())
+			ttl = &seconds
+		}
+		p := &pending{key: key, typ: typ, ttl: ttl}
+		switch typ {
+		case "string":
+			p.str = valuePipe.GetRange(ctx, key, 0, 1024*1024-1)
+		case "hash":
+			p.hash = valuePipe.HGetAll(ctx, key)
+		case "list":
+			p.list = valuePipe.LRange(ctx, key, 0, maxRedisMembers-1)
+		case "set":
+			p.set = valuePipe.SRandMemberN(ctx, key, maxRedisMembers)
+		case "zset":
+			p.zset = valuePipe.ZRangeWithScores(ctx, key, 0, maxRedisMembers-1)
+		default:
+			continue // unsupported type — same as readRedisEntry's error path
+		}
+		pendings = append(pendings, p)
+	}
+	_, _ = valuePipe.Exec(ctx)
+
+	entries := make([]redisKeyEntry, 0, len(pendings))
+	for _, p := range pendings {
+		entry := redisKeyEntry{Key: p.key, TTL: p.ttl, Value: redisValue{Type: p.typ}}
+		var err error
+		switch p.typ {
+		case "string":
+			entry.Value.Value, err = p.str.Result()
+		case "hash":
+			var values map[string]string
+			values, err = p.hash.Result()
+			for field, value := range values {
+				entry.Value.Fields = append(entry.Value.Fields, redisHashField{Field: field, Value: value})
+			}
+		case "list":
+			entry.Value.Items, err = p.list.Result()
+		case "set":
+			entry.Value.Members, err = p.set.Result()
+		case "zset":
+			var values []redis.Z
+			values, err = p.zset.Result()
+			for _, value := range values {
+				entry.Value.ZValues = append(entry.Value.ZValues, redisZMember{Member: fmt.Sprint(value.Member), Score: value.Score})
+			}
+		}
+		if err == nil {
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
 func (s *Server) ListRedisKeys(w http.ResponseWriter, r *http.Request) {
 	user, err := auth.Resolve(r.Context(), s.Pool, bearerToken(r))
 	if err != nil {
@@ -188,13 +280,7 @@ func (s *Server) ListRedisKeys(w http.ResponseWriter, r *http.Request) {
 	if len(keys) > maxRedisKeys {
 		keys = keys[:maxRedisKeys]
 	}
-	entries := make([]redisKeyEntry, 0, len(keys))
-	for _, key := range keys {
-		entry, readErr := readRedisEntry(r.Context(), client, key)
-		if readErr == nil {
-			entries = append(entries, entry)
-		}
-	}
+	entries := readRedisEntries(r.Context(), client, keys)
 	writeJSON(w, http.StatusOK, entries)
 }
 
@@ -218,6 +304,12 @@ func writeRedisValue(ctx context.Context, client *redis.Client, entry redisKeyEn
 		temp := entry
 		temp.Key = "__dbeans_tmp:" + hex.EncodeToString(random)
 		if err := writeRedisValue(ctx, client, temp, false); err != nil {
+			// The value write itself may have succeeded even though this
+			// returned an error (e.g. the trailing Expire call failed) —
+			// Del on a key that was never created is a harmless no-op, so
+			// clean up unconditionally rather than leaving a possible
+			// orphaned duplicate under the temp key.
+			_ = client.Del(ctx, temp.Key).Err()
 			return err
 		}
 		if err := client.Rename(ctx, temp.Key, entry.Key).Err(); err != nil {
